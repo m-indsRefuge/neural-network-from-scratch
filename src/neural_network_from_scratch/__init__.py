@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from neural-network-from-scratch!")
+"""Neural-network fundamentals implemented from first principles."""

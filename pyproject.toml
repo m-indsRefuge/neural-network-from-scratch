@@ -1,7 +1,7 @@
 [project]
 name = "neural-network-from-scratch"
 version = "0.1.0"
-description = "Add your description here"
+description = "A neural network implemented from first principles with Python and NumPy."
 readme = "README.md"
 authors = [
     { name = "Nolan Augustine", email = "nolanaug@gmail.com" }
@@ -11,8 +11,6 @@ dependencies = [
     "numpy>=2.5.2",
 ]
 
-[project.scripts]
-neural-network-from-scratch = "neural_network_from_scratch:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
@@ -23,3 +21,10 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.2",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
