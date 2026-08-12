@@ -4,7 +4,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from neural_network_from_scratch.activations import sigmoid
+from neural_network_from_scratch.activations import (
+    sigmoid,
+    sigmoid_derivative_from_activation,
+)
 
 
 @dataclass(frozen=True)
@@ -80,3 +83,64 @@ def forward(
     )
 
     return predictions, cache
+
+
+
+@dataclass(frozen=True)
+class Gradients:
+    """Analytical gradients for every NN-01 trainable parameter."""
+
+    w1: np.ndarray
+    b1: np.ndarray
+    w2: np.ndarray
+    b2: np.ndarray
+    w3: np.ndarray
+    b3: np.ndarray
+
+
+def backward(
+    targets: np.ndarray,
+    parameters: Parameters,
+    cache: ForwardCache,
+) -> Gradients:
+    """Propagate prediction error backward through NN-01."""
+    sample_count = targets.shape[0]
+
+    dz3 = (cache.predictions - targets) / sample_count
+    dw3 = cache.a2.T @ dz3
+    db3 = np.sum(dz3, axis=0, keepdims=True)
+
+    da2 = dz3 @ parameters.w3.T
+    dz2 = da2 * sigmoid_derivative_from_activation(cache.a2)
+    dw2 = cache.a1.T @ dz2
+    db2 = np.sum(dz2, axis=0, keepdims=True)
+
+    da1 = dz2 @ parameters.w2.T
+    dz1 = da1 * sigmoid_derivative_from_activation(cache.a1)
+    dw1 = cache.inputs.T @ dz1
+    db1 = np.sum(dz1, axis=0, keepdims=True)
+
+    return Gradients(
+        w1=dw1,
+        b1=db1,
+        w2=dw2,
+        b2=db2,
+        w3=dw3,
+        b3=db3,
+    )
+
+
+def update_parameters(
+    parameters: Parameters,
+    gradients: Gradients,
+    learning_rate: float,
+) -> Parameters:
+    """Return new parameters after one gradient-descent step."""
+    return Parameters(
+        w1=parameters.w1 - learning_rate * gradients.w1,
+        b1=parameters.b1 - learning_rate * gradients.b1,
+        w2=parameters.w2 - learning_rate * gradients.w2,
+        b2=parameters.b2 - learning_rate * gradients.b2,
+        w3=parameters.w3 - learning_rate * gradients.w3,
+        b3=parameters.b3 - learning_rate * gradients.b3,
+    )
