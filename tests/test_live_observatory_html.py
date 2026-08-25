@@ -226,6 +226,30 @@ def test_browser_never_implements_nn_math_or_contour_extraction() -> None:
         assert forbidden_implementation not in html
 
 
+def test_sample_selection_is_local_and_uses_python_batch_rows() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "let selectedSampleIndex = null" in html
+    assert "function pickTrainingSample" in html
+    assert "function setAggregateMode" in html
+    assert "function setSampleMode" in html
+    assert 'id="view-mode-value"' in html
+
+    for activation_path in (
+        "state.network.activations.input[selectedSampleIndex]",
+        "state.network.activations.hidden_1[selectedSampleIndex]",
+        "state.network.activations.hidden_2[selectedSampleIndex]",
+        "state.network.activations.output[selectedSampleIndex]",
+    ):
+        assert activation_path in html
+
+    assert "selectedSampleIndex === index" in html
+    assert "function pickTrainingSample" in html
+
+
 def test_browser_consumes_server_learning_dynamics() -> None:
     html = render_live_observatory_html(
         linear_split_experiment(),

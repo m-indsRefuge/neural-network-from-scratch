@@ -528,6 +528,12 @@ input:focus-visible {{
     font-weight: 650;
 }}
 
+.mode-readout {{
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}}
+
 .overlay-control input {{
     accent-color: var(--accent-positive);
 }}
@@ -558,6 +564,10 @@ input:focus-visible {{
 
 .class-one {{
     background: var(--accent-positive);
+}}
+
+#belief-canvas {{
+    cursor: crosshair;
 }}
 
 .note {{
@@ -762,6 +772,10 @@ input:focus-visible {{
                 Aggregate
             </button>
 
+            <span class="mode-readout" id="view-mode-value">
+                Aggregate
+            </span>
+
             <label class="overlay-control">
                 <input id="weight-overlay-toggle" type="checkbox" checked>
                 Weights
@@ -828,6 +842,8 @@ input:focus-visible {{
     const gradientOverlayToggle = document.getElementById(
         "gradient-overlay-toggle",
     );
+    const aggregateButton = document.getElementById("aggregate-button");
+    const viewModeValue = document.getElementById("view-mode-value");
 
     const stepButton = document.getElementById("step-button");
     const trainButton = document.getElementById("train-button");
@@ -851,6 +867,7 @@ input:focus-visible {{
     let currentNetworkLayout = null;
     let currentNetworkConnections = [];
     let hoveredNetworkItem = null;
+    let selectedSampleIndex = null;
 
     function delay(milliseconds) {{
         return new Promise((resolve) => {{
@@ -1220,20 +1237,70 @@ input:focus-visible {{
         }});
     }}
 
+    function selectedSampleActivations(state) {{
+        if (
+            selectedSampleIndex === null
+            || selectedSampleIndex >= data.training_inputs.length
+        ) {{
+            return null;
+        }}
+
+        const input = state.network.activations.input[selectedSampleIndex];
+        const hidden1 = state.network.activations.hidden_1[selectedSampleIndex];
+        const hidden2 = state.network.activations.hidden_2[selectedSampleIndex];
+        const output = state.network.activations.output[selectedSampleIndex];
+
+        if (
+            input === undefined
+            || hidden1 === undefined
+            || hidden2 === undefined
+            || output === undefined
+        ) {{
+            return null;
+        }}
+
+        return {{
+            input,
+            hidden_1: hidden1,
+            hidden_2: hidden2,
+            output,
+        }};
+    }}
+
     function aggregateNodePresentation(
         network,
         previousNetwork,
         progress,
         layerIndex,
         nodeIndex,
+        sampleActivations,
+        previousSampleActivations,
     ) {{
         const layerKey = NETWORK_LAYER_KEYS[layerIndex];
         const summary = network.activation_summary[layerKey];
+
+        if (sampleActivations !== null) {{
+            const currentActivation = sampleActivations[layerKey][nodeIndex];
+            const previousActivation = previousSampleActivations === null
+                ? currentActivation
+                : previousSampleActivations[layerKey][nodeIndex];
+
+            return {{
+                activation: interpolateNumber(
+                    previousActivation,
+                    currentActivation,
+                    progress,
+                ),
+                spread: 0,
+                isSample: true,
+            }};
+        }}
 
         if (previousNetwork === null) {{
             return {{
                 activation: summary.mean[nodeIndex],
                 spread: summary.spread[nodeIndex],
+                isSample: false,
             }};
         }}
 
@@ -1250,6 +1317,7 @@ input:focus-visible {{
                 summary.spread[nodeIndex],
                 progress,
             ),
+            isSample: false,
         }};
     }}
 
@@ -1300,7 +1368,14 @@ input:focus-visible {{
         );
     }}
 
-    function drawNetworkNodes(network, layout, previousNetwork, progress) {{
+    function drawNetworkNodes(
+        network,
+        layout,
+        previousNetwork,
+        progress,
+        sampleActivations,
+        previousSampleActivations,
+    ) {{
         layout.forEach((layer) => {{
             layer.forEach((node) => {{
                 const values = aggregateNodePresentation(
@@ -1309,6 +1384,8 @@ input:focus-visible {{
                     progress,
                     node.layerIndex,
                     node.nodeIndex,
+                    sampleActivations,
+                    previousSampleActivations,
                 );
                 const activation = Math.max(0, Math.min(1, values.activation));
                 const spread = Math.max(0, Math.min(1, values.spread));
@@ -1338,12 +1415,18 @@ input:focus-visible {{
                 networkContext.arc(
                     node.x,
                     node.y,
-                    radius + 3 + spread * 4,
+                    values.isSample
+                        ? radius + 4
+                        : radius + 3 + spread * 4,
                     0,
                     Math.PI * 2,
                 );
-                networkContext.lineWidth = 1 + spread * 2.5;
-                networkContext.strokeStyle = "rgba(24, 127, 156, 0.20)";
+                networkContext.lineWidth = values.isSample
+                    ? 2.2
+                    : 1 + spread * 2.5;
+                networkContext.strokeStyle = values.isSample
+                    ? "rgba(226, 154, 46, 0.78)"
+                    : "rgba(24, 127, 156, 0.20)";
                 networkContext.stroke();
 
                 const gradient = networkContext.createRadialGradient(
@@ -1408,7 +1491,13 @@ input:focus-visible {{
         }});
     }}
 
-    function drawNetwork(network, previousNetwork = null, progress = 1) {{
+    function drawNetwork(
+        network,
+        previousNetwork = null,
+        progress = 1,
+        sampleActivations = null,
+        previousSampleActivations = null,
+    ) {{
         const layout = buildNetworkLayout();
         const connections = buildNetworkConnections(network, layout);
 
@@ -1424,7 +1513,29 @@ input:focus-visible {{
         drawStructuralDepthGuides(layout);
         drawNetworkEdges(connections, previousNetwork, progress);
         drawGradientOverlay(connections, previousNetwork, progress);
-        drawNetworkNodes(network, layout, previousNetwork, progress);
+        drawNetworkNodes(
+            network,
+            layout,
+            previousNetwork,
+            progress,
+            sampleActivations,
+            previousSampleActivations,
+        );
+    }}
+
+    function drawNetworkForState(state, previousState = null, progress = 1) {{
+        drawNetwork(
+            state.network,
+            previousState === null
+                ? null
+                : previousState.network,
+            progress,
+            selectedSampleActivations(state),
+            previousState === null
+                ? null
+                : selectedSampleActivations(previousState),
+        );
+        renderNetworkInspection(state);
     }}
 
     function formatRawValue(value) {{
@@ -1436,9 +1547,16 @@ input:focus-visible {{
         return names[layerIndex] + "[" + nodeIndex + "]";
     }}
 
-    function renderNetworkInspection(network) {{
+    function renderNetworkInspection(state) {{
+        const network = state.network;
+        const sampleActivations = selectedSampleActivations(state);
+
         if (hoveredNetworkItem === null) {{
-            networkInspection.textContent = "Aggregate batch activity · hover a neuron or connection";
+            networkInspection.textContent = sampleActivations === null
+                ? "Aggregate batch activity · hover a neuron or connection"
+                : "Sample #"
+                    + (selectedSampleIndex + 1)
+                    + " exact activity · hover a neuron or connection";
             return;
         }}
 
@@ -1457,6 +1575,24 @@ input:focus-visible {{
                     + formatRawValue(bias.value)
                     + " · bias gradient "
                     + formatRawValue(bias.gradient);
+
+            if (sampleActivations !== null) {{
+                networkInspection.textContent = "Sample #"
+                    + (selectedSampleIndex + 1)
+                    + " · "
+                    + networkNodeLabel(
+                        hoveredNetworkItem.layerIndex,
+                        index,
+                    )
+                    + " · activation "
+                    + formatRawValue(sampleActivations[layerKey][index])
+                    + " · target "
+                    + formatRawValue(
+                        data.training_targets[selectedSampleIndex],
+                    )
+                    + biasReadout;
+                return;
+            }}
 
             networkInspection.textContent = networkNodeLabel(
                 hoveredNetworkItem.layerIndex,
@@ -1616,15 +1752,13 @@ input:focus-visible {{
             return;
         }}
 
-        drawNetwork(networkPresentationState.network);
-        renderNetworkInspection(networkPresentationState.network);
+        drawNetworkForState(networkPresentationState);
     }}
 
     function queueServerState(state) {{
         if (networkPresentationState === null) {{
             networkPresentationState = state;
-            drawNetwork(state.network);
-            renderNetworkInspection(state.network);
+            drawNetworkForState(state);
             return;
         }}
 
@@ -1652,12 +1786,11 @@ input:focus-visible {{
                 (timestamp - startedAt) / NETWORK_TRANSITION_DURATION,
             );
 
-            drawNetwork(
-                nextState.network,
-                previousState.network,
+            drawNetworkForState(
+                nextState,
+                previousState,
                 progress,
             );
-            renderNetworkInspection(nextState.network);
 
             if (progress < 1) {{
                 networkAnimationFrame = window.requestAnimationFrame(animate);
@@ -1673,6 +1806,55 @@ input:focus-visible {{
         }};
 
         networkAnimationFrame = window.requestAnimationFrame(animate);
+    }}
+
+    function redrawDecisionSurface() {{
+        if (currentState === null) {{
+            return;
+        }}
+
+        drawField(decodeField(currentState.field));
+        drawDecisionBoundary(currentState.decision_boundary);
+        drawTrainingPoints();
+    }}
+
+    function setAggregateMode() {{
+        selectedSampleIndex = null;
+        aggregateButton.setAttribute("aria-pressed", "true");
+        viewModeValue.textContent = "Aggregate";
+        redrawDecisionSurface();
+        redrawNetworkPresentation();
+    }}
+
+    function setSampleMode(index) {{
+        selectedSampleIndex = index;
+        aggregateButton.setAttribute("aria-pressed", "false");
+        viewModeValue.textContent = "Sample #" + String(index + 1);
+        redrawDecisionSurface();
+        redrawNetworkPresentation();
+    }}
+
+    function pickTrainingSample(point) {{
+        let selected = null;
+        let closestDistance = 16;
+
+        data.training_inputs.forEach((sample, index) => {{
+            const samplePoint = {{
+                x: sample[0] * size,
+                y: (1 - sample[1]) * size,
+            }};
+            const distance = Math.hypot(
+                point.x - samplePoint.x,
+                point.y - samplePoint.y,
+            );
+
+            if (distance < closestDistance) {{
+                selected = index;
+                closestDistance = distance;
+            }}
+        }});
+
+        return selected;
     }}
 
     function renderNetwork(state) {{
@@ -1704,6 +1886,29 @@ input:focus-visible {{
         }}
     }}
 
+    aggregateButton.addEventListener("click", () => {{
+        setAggregateMode();
+    }});
+
+    canvas.addEventListener("click", (event) => {{
+        const bounds = canvas.getBoundingClientRect();
+        const selected = pickTrainingSample({{
+            x: (event.clientX - bounds.left) * size / bounds.width,
+            y: (event.clientY - bounds.top) * size / bounds.height,
+        }});
+
+        if (selected === null) {{
+            return;
+        }}
+
+        if (selectedSampleIndex === selected) {{
+            setAggregateMode();
+            return;
+        }}
+
+        setSampleMode(selected);
+    }});
+
     networkCanvas.addEventListener("mousemove", (event) => {{
         const bounds = networkCanvas.getBoundingClientRect();
         const point = {{
@@ -1728,8 +1933,8 @@ input:focus-visible {{
     function probabilityColor(value) {{
         const probability = value / 255;
 
-        const zero = [31, 20, 66];
-        const one = [35, 220, 235];
+        const zero = [244, 236, 231];
+        const one = [183, 222, 231];
 
         const red = Math.round(
             zero[0] + probability * (one[0] - zero[0])
@@ -1785,8 +1990,12 @@ input:focus-visible {{
             );
         }});
 
-        context.lineWidth = 3;
-        context.strokeStyle = "rgb(255,255,255)";
+        context.lineWidth = 5;
+        context.strokeStyle = "rgba(255, 255, 255, 0.86)";
+        context.stroke();
+
+        context.lineWidth = 2.25;
+        context.strokeStyle = "rgb(35, 50, 57)";
         context.stroke();
         context.restore();
     }}
@@ -1905,23 +2114,37 @@ input:focus-visible {{
             const x = point[0] * size;
             const y = (1 - point[1]) * size;
 
+            if (selectedSampleIndex === index) {{
+                context.beginPath();
+                context.arc(
+                    x,
+                    y,
+                    15,
+                    0,
+                    Math.PI * 2
+                );
+                context.lineWidth = 3;
+                context.strokeStyle = "rgb(226, 154, 46)";
+                context.stroke();
+            }}
+
             context.beginPath();
             context.arc(
                 x,
                 y,
-                9,
+                8,
                 0,
                 Math.PI * 2
             );
 
             context.fillStyle = classValue === 0
-                ? "rgb(255,79,216)"
-                : "rgb(82,230,255)";
+                ? "rgb(195, 93, 82)"
+                : "rgb(24, 127, 156)";
 
             context.fill();
 
             context.lineWidth = 2;
-            context.strokeStyle = "rgb(255,255,255)";
+            context.strokeStyle = "rgba(255, 255, 255, 0.92)";
             context.stroke();
         }});
     }}
