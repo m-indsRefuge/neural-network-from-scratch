@@ -95,3 +95,39 @@ def test_live_viewer_output_is_deterministic() -> None:
     )
 
     assert first == second
+
+
+def test_live_viewer_has_learning_dynamics_surfaces() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert 'id="belief-canvas"' in html
+    assert 'id="loss-canvas"' in html
+    assert "function drawDecisionBoundary" in html
+    assert "function drawLossHistory" in html
+
+
+def test_browser_consumes_server_learning_dynamics() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "state.decision_boundary" in html
+    assert "state.loss_history" in html
+
+    assert "marchingSquares" not in html
+    assert "computeDecisionBoundary" not in html
+
+
+def test_loss_history_draws_visible_current_point() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "function drawLossHistory" in html
+    assert "lossContext.arc(" in html
+    assert "lossContext.fill()" in html

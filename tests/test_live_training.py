@@ -6,7 +6,8 @@ import pytest
 from neural_network_from_scratch.experiment_runner import run_experiment
 from neural_network_from_scratch.experiments import linear_split_experiment
 from neural_network_from_scratch.live_training import LiveTrainingSession
-from neural_network_from_scratch.network import Parameters
+from neural_network_from_scratch.losses import binary_cross_entropy
+from neural_network_from_scratch.network import Parameters, forward
 
 
 def _assert_parameters_equal(
@@ -172,3 +173,66 @@ def test_training_can_pause_between_steps_and_resume_exactly() -> None:
         session.parameters,
         expected_parameters,
     )
+
+def test_live_loss_history_starts_with_epoch_zero_model() -> None:
+    experiment = replace(
+        linear_split_experiment(),
+        epochs=3,
+    )
+    session = LiveTrainingSession(experiment)
+
+    predictions, _ = forward(
+        experiment.inputs,
+        session.parameters,
+    )
+    expected = binary_cross_entropy(
+        experiment.targets,
+        predictions,
+    )
+
+    assert session.epoch == 0
+    assert session.losses == []
+    assert session.loss_history == (expected,)
+
+def test_live_loss_history_appends_post_update_loss() -> None:
+    experiment = replace(
+        linear_split_experiment(),
+        epochs=3,
+    )
+    session = LiveTrainingSession(experiment)
+
+    initial_loss = session.loss_history[-1]
+    snapshot = session.step()
+
+    predictions, _ = forward(
+        experiment.inputs,
+        session.parameters,
+    )
+    current_loss = binary_cross_entropy(
+        experiment.targets,
+        predictions,
+    )
+
+    assert session.epoch == 1
+    assert len(session.loss_history) == 2
+    assert session.loss_history == (
+        initial_loss,
+        current_loss,
+    )
+
+    assert session.losses == [snapshot.loss]
+    assert session.loss_history[-1] != snapshot.loss
+
+
+def test_live_loss_history_length_tracks_epoch_plus_one() -> None:
+    experiment = replace(
+        linear_split_experiment(),
+        epochs=4,
+    )
+    session = LiveTrainingSession(experiment)
+
+    assert len(session.loss_history) == 1
+
+    while not session.is_complete:
+        session.step()
+        assert len(session.loss_history) == session.epoch + 1

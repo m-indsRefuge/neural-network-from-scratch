@@ -19,7 +19,29 @@ class LiveTrainingSession:
         self._experiment = experiment
         self._parameters = initialize_parameters(experiment.seed)
         self._losses: list[float] = []
+        self._loss_history: list[float] = [
+            self._loss_for_parameters(self._parameters)
+        ]
         self._epoch = 0
+
+    def _loss_for_parameters(
+        self,
+        parameters: Parameters,
+    ) -> float:
+        predictions, _ = forward(
+            self._experiment.inputs,
+            parameters,
+        )
+
+        return binary_cross_entropy(
+            self._experiment.targets,
+            predictions,
+        )
+
+    @property
+    def loss_history(self) -> tuple[float, ...]:
+        """Return post-update live-view losses from epoch zero onward."""
+        return tuple(self._loss_history)
 
     @property
     def epoch(self) -> int:
@@ -81,5 +103,8 @@ class LiveTrainingSession:
         )
 
         self._epoch = next_epoch
+        self._loss_history.append(
+            self._loss_for_parameters(self._parameters)
+        )
 
         return snapshot

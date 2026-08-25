@@ -126,6 +126,15 @@ h1 {{
     background: #11141d;
 }}
 
+.dynamics-grid {{
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1.45fr)
+        minmax(320px, 0.85fr);
+    gap: 1px;
+    background: #2d3446;
+}}
+
 .stage {{
     width: 100%;
     aspect-ratio: 1 / 1;
@@ -133,7 +142,13 @@ h1 {{
     background: #080a10;
 }}
 
-#belief-canvas {{
+.loss-stage {{
+    min-width: 0;
+    background: #0b0e16;
+}}
+
+#belief-canvas,
+#loss-canvas {{
     display: block;
     width: 100%;
     height: 100%;
@@ -233,6 +248,12 @@ select:focus-visible {{
     font-size: 12px;
 }}
 
+@media (max-width: 900px) {{
+    .dynamics-grid {{
+        grid-template-columns: 1fr;
+    }}
+}}
+
 @media (max-width: 700px) {{
     .header {{
         display: block;
@@ -275,13 +296,24 @@ select:focus-visible {{
     </header>
 
     <section class="viewer">
-        <div class="stage">
-            <canvas
-                id="belief-canvas"
-                width="640"
-                height="640"
-                aria-label="Live neural network prediction field"
-            ></canvas>
+        <div class="dynamics-grid">
+            <div class="stage">
+                <canvas
+                    id="belief-canvas"
+                    width="640"
+                    height="640"
+                    aria-label="Live neural network prediction field"
+                ></canvas>
+            </div>
+
+            <div class="loss-stage">
+                <canvas
+                    id="loss-canvas"
+                    width="480"
+                    height="640"
+                    aria-label="Live binary cross-entropy loss history"
+                ></canvas>
+            </div>
         </div>
 
         <div class="controls">
@@ -340,6 +372,9 @@ select:focus-visible {{
 
     const canvas = document.getElementById("belief-canvas");
     const context = canvas.getContext("2d");
+
+    const lossCanvas = document.getElementById("loss-canvas");
+    const lossContext = lossCanvas.getContext("2d");
 
     const stepButton = document.getElementById("step-button");
     const trainButton = document.getElementById("train-button");
@@ -416,6 +451,137 @@ select:focus-visible {{
         }}
     }}
 
+    function drawDecisionBoundary(segments) {{
+        context.save();
+        context.beginPath();
+
+        segments.forEach((segment) => {{
+            const start = segment[0];
+            const end = segment[1];
+
+            context.moveTo(
+                start[0] * size,
+                (1 - start[1]) * size
+            );
+
+            context.lineTo(
+                end[0] * size,
+                (1 - end[1]) * size
+            );
+        }});
+
+        context.lineWidth = 3;
+        context.strokeStyle = "rgb(255,255,255)";
+        context.stroke();
+        context.restore();
+    }}
+
+    function drawLossHistory(history) {{
+        const width = lossCanvas.width;
+        const height = lossCanvas.height;
+
+        const left = 54;
+        const right = 20;
+        const top = 28;
+        const bottom = 44;
+
+        const plotWidth = width - left - right;
+        const plotHeight = height - top - bottom;
+
+        lossContext.clearRect(
+            0,
+            0,
+            width,
+            height
+        );
+
+        lossContext.strokeStyle = "rgb(72,81,106)";
+        lossContext.lineWidth = 1;
+        lossContext.beginPath();
+        lossContext.moveTo(left, top);
+        lossContext.lineTo(left, height - bottom);
+        lossContext.lineTo(
+            width - right,
+            height - bottom
+        );
+        lossContext.stroke();
+
+        if (history.length === 0) {{
+            return;
+        }}
+
+        const maxLoss = Math.max(
+            ...history,
+            1e-12
+        );
+        const maxEpoch = Math.max(
+            history.length - 1,
+            1
+        );
+
+        lossContext.beginPath();
+
+        history.forEach((loss, epoch) => {{
+            const x =
+                left
+                + (epoch / maxEpoch) * plotWidth;
+
+            const y =
+                height
+                - bottom
+                - (loss / maxLoss) * plotHeight;
+
+            if (epoch === 0) {{
+                lossContext.moveTo(x, y);
+            }}
+            else {{
+                lossContext.lineTo(x, y);
+            }}
+        }});
+
+        lossContext.strokeStyle = "rgb(82,230,255)";
+        lossContext.lineWidth = 2;
+        lossContext.stroke();
+
+        const currentEpoch = history.length - 1;
+        const currentLoss = history[currentEpoch];
+
+        const currentX =
+            left
+            + (currentEpoch / maxEpoch) * plotWidth;
+
+        const currentY =
+            height
+            - bottom
+            - (currentLoss / maxLoss) * plotHeight;
+
+        lossContext.beginPath();
+        lossContext.arc(
+            currentX,
+            currentY,
+            4.5,
+            0,
+            Math.PI * 2
+        );
+        lossContext.fillStyle = "rgb(82,230,255)";
+        lossContext.fill();
+
+        lossContext.fillStyle = "rgb(155,166,190)";
+        lossContext.font = "12px ui-monospace, monospace";
+
+        lossContext.fillText(
+            "BCE loss",
+            left,
+            18
+        );
+
+        lossContext.fillText(
+            "epoch " + String(history.length - 1),
+            width - right - 82,
+            height - 14
+        );
+    }}
+
     function drawTrainingPoints() {{
         data.training_inputs.forEach((point, index) => {{
             const target = data.training_targets[index];
@@ -468,7 +634,9 @@ select:focus-visible {{
         const values = decodeField(state.field);
 
         drawField(values);
+        drawDecisionBoundary(state.decision_boundary);
         drawTrainingPoints();
+        drawLossHistory(state.loss_history);
 
         epochValue.textContent = String(state.epoch);
         lossValue.textContent = Number(state.loss).toFixed(6);
