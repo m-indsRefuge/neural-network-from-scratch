@@ -1,11 +1,42 @@
-"""Self-contained interactive HTML rendering for NN training evolution."""
+"""Compact interactive HTML rendering for NN training evolution."""
 
+import json
 from html import escape
 
 from neural_network_from_scratch.experiments import Experiment
-from neural_network_from_scratch.field_svg import render_prediction_field_svg
 from neural_network_from_scratch.prediction_field import probe_prediction_field
 from neural_network_from_scratch.training_evolution import TrainingEvolution
+
+
+def _viewer_data(
+    experiment: Experiment,
+    evolution: TrainingEvolution,
+    *,
+    resolution: int,
+) -> dict:
+    """Build compact serializable data for the browser-only renderer."""
+    frames = []
+
+    for snapshot in evolution.snapshots:
+        field = probe_prediction_field(
+            snapshot.parameters,
+            resolution=resolution,
+        )
+
+        frames.append(
+            {
+                "epoch": snapshot.epoch,
+                "loss": snapshot.loss,
+                "probabilities": field.probabilities.ravel().tolist(),
+            }
+        )
+
+    return {
+        "resolution": resolution,
+        "frames": frames,
+        "training_inputs": experiment.inputs.tolist(),
+        "training_targets": experiment.targets.ravel().tolist(),
+    }
 
 
 def render_training_evolution_html(
@@ -14,44 +45,24 @@ def render_training_evolution_html(
     *,
     resolution: int,
 ) -> str:
-    """Render selected training snapshots as a self-contained HTML viewer."""
+    """Render selected training snapshots as a compact canvas-based viewer."""
     if not evolution.snapshots:
         raise ValueError("training evolution must contain at least one snapshot")
 
-    frames: list[str] = []
+    data = _viewer_data(
+        experiment,
+        evolution,
+        resolution=resolution,
+    )
 
-    for index, snapshot in enumerate(evolution.snapshots):
-        field = probe_prediction_field(
-            snapshot.parameters,
-            resolution=resolution,
-        )
+    serialized_data = json.dumps(
+        data,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
 
-        svg = render_prediction_field_svg(
-            field,
-            training_inputs=experiment.inputs,
-            training_targets=experiment.targets,
-        )
-
-        display = "block" if index == 0 else "none"
-
-        frames.append(
-
-                f'<div class="evolution-frame" '
-                f'data-evolution-frame="true" '
-                f'data-frame-index="{index}" '
-                f'data-epoch="{snapshot.epoch}" '
-                f'data-loss="{snapshot.loss:.17g}" '
-                f'style="display:{display}">'
-                f"{svg}"
-                "</div>"
-
-        )
-
-    first_snapshot = evolution.snapshots[0]
-    last_index = len(evolution.snapshots) - 1
     escaped_name = escape(experiment.name)
-
-    frames_html = "\n".join(frames)
+    display_name = escaped_name.replace("_", " ").title()
 
     return f"""<!doctype html>
 <html lang="en">
@@ -141,14 +152,10 @@ h1 {{
     background: #080a10;
 }}
 
-.evolution-frame,
-.evolution-frame svg {{
+#belief-canvas {{
+    display: block;
     width: 100%;
     height: 100%;
-}}
-
-.evolution-frame svg {{
-    display: block;
 }}
 
 .controls {{
@@ -236,12 +243,6 @@ input[type="range"] {{
         grid-template-columns: 1fr;
     }}
 }}
-
-@media (prefers-reduced-motion: reduce) {{
-    * {{
-        scroll-behavior: auto !important;
-    }}
-}}
 </style>
 </head>
 <body>
@@ -249,28 +250,29 @@ input[type="range"] {{
     <header class="header">
         <div>
             <p class="eyebrow">Neural Observatory</p>
-            <h1>{escaped_name.replace("_", " ").title()}</h1>
+            <h1>{display_name}</h1>
         </div>
 
         <div class="readout" aria-live="polite">
             <div>
                 <span class="metric-label">Epoch</span>
-                <span class="metric-value" id="epoch-value">
-                    {first_snapshot.epoch}
-                </span>
+                <span class="metric-value" id="epoch-value"></span>
             </div>
             <div>
                 <span class="metric-label">Loss</span>
-                <span class="metric-value" id="loss-value">
-                    {first_snapshot.loss:.6f}
-                </span>
+                <span class="metric-value" id="loss-value"></span>
             </div>
         </div>
     </header>
 
     <section class="viewer">
         <div class="stage">
-            {frames_html}
+            <canvas
+                id="belief-canvas"
+                width="640"
+                height="640"
+                aria-label="Neural network prediction field"
+            ></canvas>
         </div>
 
         <div class="controls">
@@ -280,7 +282,7 @@ input[type="range"] {{
                 id="epoch-slider"
                 type="range"
                 min="0"
-                max="{last_index}"
+                max="{len(evolution.snapshots) - 1}"
                 step="1"
                 value="0"
                 aria-label="Training epoch frame"
@@ -304,33 +306,93 @@ input[type="range"] {{
     </p>
 </main>
 
+<script id="evolution-data" type="application/json">{serialized_data}</script>
 <script>
 (() => {{
-    const frames = Array.from(
-        document.querySelectorAll('[data-evolution-frame="true"]')
+    const data = JSON.parse(
+        document.getElementById("evolution-data").textContent
     );
+
+    const canvas = document.getElementById("belief-canvas");
+    const context = canvas.getContext("2d");
     const slider = document.getElementById("epoch-slider");
     const playButton = document.getElementById("play-toggle");
     const epochValue = document.getElementById("epoch-value");
     const lossValue = document.getElementById("loss-value");
 
+    const size = canvas.width;
+    const resolution = data.resolution;
+    const cellSize = size / resolution;
+
     let timer = null;
+
+    function probabilityColor(probability) {{
+        const p = Math.max(0, Math.min(1, probability));
+
+        const zero = [31, 20, 66];
+        const one = [35, 220, 235];
+
+        const red = Math.round(zero[0] + p * (one[0] - zero[0]));
+        const green = Math.round(zero[1] + p * (one[1] - zero[1]));
+        const blue = Math.round(zero[2] + p * (one[2] - zero[2]));
+
+        return `rgb(${{red}},${{green}},${{blue}})`;
+    }}
+
+    function drawField(frame) {{
+        context.clearRect(0, 0, size, size);
+
+        for (let row = 0; row < resolution; row += 1) {{
+            for (let column = 0; column < resolution; column += 1) {{
+                const index = row * resolution + column;
+                const probability = frame.probabilities[index];
+
+                const x = column * cellSize;
+                const y = size - ((row + 1) * cellSize);
+
+                context.fillStyle = probabilityColor(probability);
+                context.fillRect(x, y, cellSize + 0.5, cellSize + 0.5);
+            }}
+        }}
+    }}
+
+    function drawTrainingPoints() {{
+        data.training_inputs.forEach((point, index) => {{
+            const target = data.training_targets[index];
+            const classValue = target >= 0.5 ? 1 : 0;
+
+            const x = point[0] * size;
+            const y = (1 - point[1]) * size;
+
+            context.beginPath();
+            context.arc(x, y, 9, 0, Math.PI * 2);
+
+            context.fillStyle = classValue === 0
+                ? "rgb(255,79,216)"
+                : "rgb(82,230,255)";
+
+            context.fill();
+
+            context.lineWidth = 2;
+            context.strokeStyle = "rgb(255,255,255)";
+            context.stroke();
+        }});
+    }}
 
     function showFrame(index) {{
         const safeIndex = Math.max(
             0,
-            Math.min(frames.length - 1, Number(index))
+            Math.min(data.frames.length - 1, Number(index))
         );
 
-        frames.forEach((frame, frameIndex) => {{
-            frame.style.display = frameIndex === safeIndex ? "block" : "none";
-        }});
+        const frame = data.frames[safeIndex];
 
-        const frame = frames[safeIndex];
+        drawField(frame);
+        drawTrainingPoints();
 
         slider.value = String(safeIndex);
-        epochValue.textContent = frame.dataset.epoch;
-        lossValue.textContent = Number(frame.dataset.loss).toFixed(6);
+        epochValue.textContent = frame.epoch;
+        lossValue.textContent = Number(frame.loss).toFixed(6);
     }}
 
     function stopPlayback() {{
@@ -349,7 +411,7 @@ input[type="range"] {{
         timer = window.setInterval(() => {{
             const current = Number(slider.value);
 
-            if (current >= frames.length - 1) {{
+            if (current >= data.frames.length - 1) {{
                 stopPlayback();
                 return;
             }}
@@ -369,7 +431,7 @@ input[type="range"] {{
             return;
         }}
 
-        if (Number(slider.value) >= frames.length - 1) {{
+        if (Number(slider.value) >= data.frames.length - 1) {{
             showFrame(0);
         }}
 
