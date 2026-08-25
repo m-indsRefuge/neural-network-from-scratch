@@ -272,3 +272,25 @@ def test_loss_history_draws_visible_current_point() -> None:
     assert "function drawLossHistory" in html
     assert "lossContext.arc(" in html
     assert "lossContext.fill()" in html
+
+
+def test_light_dynamics_controls_and_error_rendering_use_live_state() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert html.count("<style>") == 1
+    assert "color-scheme: dark" not in html
+    assert "function drawLossHistory" in html
+    assert "state.loss_history" in html
+    assert "lossContext.arc(" in html
+    assert "state.network_error" in html
+    assert "function renderNetworkError" in html
+    assert 'id="weight-overlay-toggle"' in html
+    assert 'id="gradient-overlay-toggle"' in html
+    assert 'weightOverlayToggle.addEventListener("change"' in html
+    assert 'gradientOverlayToggle.addEventListener("change"' in html
+
+    for value in ("1000", "200", "100", "0"):
+        assert f'value="{value}"' in html

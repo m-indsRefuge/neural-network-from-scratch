@@ -35,13 +35,6 @@ def render_live_observatory_html(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Neural Observatory — {escaped_name}</title>
 <style>
-:root {{
-    color-scheme: dark;
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-    background: #090b12;
-    color: #f4f7ff;
-}}
-
 * {{
     box-sizing: border-box;
 }}
@@ -49,8 +42,7 @@ def render_live_observatory_html(
 body {{
     margin: 0;
     min-height: 100vh;
-    background:
-        radial-gradient(circle at top, #17172d 0%, #090b12 55%);
+    background: var(--surface-page);
 }}
 
 .observatory {{
@@ -72,7 +64,7 @@ body {{
     font-size: 12px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: #9ba6be;
+    color: var(--text-muted);
 }}
 
 h1 {{
@@ -86,7 +78,7 @@ h1 {{
     align-items: center;
     gap: 8px;
     margin-top: 10px;
-    color: #9ba6be;
+    color: var(--text-secondary);
     font-size: 12px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -96,7 +88,7 @@ h1 {{
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: rgb(82,230,255);
+    background: var(--accent-positive);
 }}
 
 .readout {{
@@ -110,7 +102,7 @@ h1 {{
     font-size: 11px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #8f99ad;
+    color: var(--text-muted);
 }}
 
 .metric-value {{
@@ -122,9 +114,9 @@ h1 {{
 
 .viewer {{
     overflow: hidden;
-    border: 1px solid #2d3446;
+    border: 1px solid var(--border-subtle);
     border-radius: 18px;
-    background: #11141d;
+    background: var(--surface-panel);
 }}
 
 .dynamics-grid {{
@@ -133,19 +125,19 @@ h1 {{
         minmax(0, 1.45fr)
         minmax(320px, 0.85fr);
     gap: 1px;
-    background: #2d3446;
+    background: var(--border-subtle);
 }}
 
 .stage {{
     width: 100%;
     aspect-ratio: 1 / 1;
     max-height: 720px;
-    background: #080a10;
+    background: var(--surface-inset);
 }}
 
 .loss-stage {{
     min-width: 0;
-    background: #0b0e16;
+    background: var(--surface-inset);
 }}
 
 #belief-canvas,
@@ -161,16 +153,16 @@ h1 {{
     gap: 12px;
     align-items: center;
     padding: 18px;
-    border-top: 1px solid #2d3446;
+    border-top: 1px solid var(--border-subtle);
 }}
 
 button,
 select {{
     height: 44px;
-    border: 1px solid #48516a;
+    border: 1px solid var(--border-subtle);
     border-radius: 10px;
-    background: #171c28;
-    color: #f4f7ff;
+    background: var(--surface-panel);
+    color: var(--text-primary);
     font: inherit;
 }}
 
@@ -181,7 +173,7 @@ button {{
 }}
 
 button:hover:not(:disabled) {{
-    background: #202738;
+    background: var(--surface-inset);
 }}
 
 button:disabled {{
@@ -196,7 +188,7 @@ select {{
 
 button:focus-visible,
 select:focus-visible {{
-    outline: 2px solid #ffffff;
+    outline: 2px solid var(--accent-selection);
     outline-offset: 3px;
 }}
 
@@ -205,13 +197,13 @@ select:focus-visible {{
     justify-content: space-between;
     gap: 16px;
     padding: 12px 18px;
-    border-top: 1px solid #242a39;
-    color: #9ba6be;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
     font-size: 13px;
 }}
 
 .status-label {{
-    color: #788397;
+    color: var(--text-muted);
 }}
 
 .legend {{
@@ -219,7 +211,7 @@ select:focus-visible {{
     flex-wrap: wrap;
     gap: 18px;
     margin-top: 14px;
-    color: #aab4c8;
+    color: var(--text-secondary);
     font-size: 13px;
 }}
 
@@ -236,16 +228,16 @@ select:focus-visible {{
 }}
 
 .class-zero {{
-    background: rgb(255,79,216);
+    background: var(--accent-negative);
 }}
 
 .class-one {{
-    background: rgb(82,230,255);
+    background: var(--accent-positive);
 }}
 
 .note {{
     margin-top: 12px;
-    color: #788397;
+    color: var(--text-muted);
     font-size: 12px;
 }}
 
@@ -269,10 +261,9 @@ select:focus-visible {{
         grid-template-columns: 1fr 1fr;
     }}
 }}
-</style>
-<style>
 :root {{
     color-scheme: light;
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
     --surface-page: #f4f6f7;
     --surface-panel: #ffffff;
     --surface-inset: #eef2f4;
@@ -1857,37 +1848,70 @@ input:focus-visible {{
         return selected;
     }}
 
+    function clearNetworkPresentation() {{
+        if (networkAnimationFrame !== null) {{
+            window.cancelAnimationFrame(networkAnimationFrame);
+        }}
+
+        networkPresentationState = null;
+        networkStateQueue = [];
+        networkAnimationFrame = null;
+        currentNetworkLayout = null;
+        currentNetworkConnections = [];
+        hoveredNetworkItem = null;
+        networkContext.clearRect(
+            0,
+            0,
+            networkCanvas.width,
+            networkCanvas.height,
+        );
+    }}
+
+    function renderNetworkError(message) {{
+        networkError.textContent = message;
+        networkError.hidden = false;
+    }}
+
+    function clearNetworkError() {{
+        networkError.textContent = "";
+        networkError.hidden = true;
+    }}
+
     function renderNetwork(state) {{
         if (
             typeof state.network_error === "string"
             && state.network_error.length > 0
         ) {{
-            networkError.textContent = state.network_error;
-            networkError.hidden = false;
+            clearNetworkPresentation();
+            renderNetworkError(state.network_error);
             return;
         }}
 
         try {{
             validateNetworkTelemetry(state.network);
-            networkError.hidden = true;
+            clearNetworkError();
             queueServerState(state);
         }}
         catch (error) {{
-            networkContext.clearRect(
-                0,
-                0,
-                networkCanvas.width,
-                networkCanvas.height,
+            clearNetworkPresentation();
+            renderNetworkError(
+                error instanceof Error
+                    ? error.message
+                    : "Unable to render network telemetry",
             );
-            networkError.textContent = error instanceof Error
-                ? error.message
-                : "Unable to render network telemetry";
-            networkError.hidden = false;
         }}
     }}
 
     aggregateButton.addEventListener("click", () => {{
         setAggregateMode();
+    }});
+
+    weightOverlayToggle.addEventListener("change", () => {{
+        redrawNetworkPresentation();
+    }});
+
+    gradientOverlayToggle.addEventListener("change", () => {{
+        redrawNetworkPresentation();
     }});
 
     canvas.addEventListener("click", (event) => {{
@@ -2019,15 +2043,25 @@ input:focus-visible {{
             height
         );
 
-        lossContext.strokeStyle = "rgb(72,81,106)";
+        lossContext.fillStyle = "rgb(238, 242, 244)";
+        lossContext.fillRect(0, 0, width, height);
+
+        lossContext.strokeStyle = "rgba(126, 145, 153, 0.20)";
         lossContext.lineWidth = 1;
+
+        for (let gridLine = 0; gridLine <= 4; gridLine += 1) {{
+            const y = top + (gridLine / 4) * plotHeight;
+            lossContext.beginPath();
+            lossContext.moveTo(left, y);
+            lossContext.lineTo(width - right, y);
+            lossContext.stroke();
+        }}
+
+        lossContext.strokeStyle = "rgb(173, 188, 193)";
         lossContext.beginPath();
         lossContext.moveTo(left, top);
         lossContext.lineTo(left, height - bottom);
-        lossContext.lineTo(
-            width - right,
-            height - bottom
-        );
+        lossContext.lineTo(width - right, height - bottom);
         lossContext.stroke();
 
         if (history.length === 0) {{
@@ -2063,8 +2097,8 @@ input:focus-visible {{
             }}
         }});
 
-        lossContext.strokeStyle = "rgb(82,230,255)";
-        lossContext.lineWidth = 2;
+        lossContext.strokeStyle = "rgb(24, 127, 156)";
+        lossContext.lineWidth = 2.25;
         lossContext.stroke();
 
         const currentEpoch = history.length - 1;
@@ -2087,10 +2121,13 @@ input:focus-visible {{
             0,
             Math.PI * 2
         );
-        lossContext.fillStyle = "rgb(82,230,255)";
+        lossContext.fillStyle = "rgb(226, 154, 46)";
         lossContext.fill();
+        lossContext.lineWidth = 1.5;
+        lossContext.strokeStyle = "rgba(255, 255, 255, 0.96)";
+        lossContext.stroke();
 
-        lossContext.fillStyle = "rgb(155,166,190)";
+        lossContext.fillStyle = "rgb(82, 97, 109)";
         lossContext.font = "12px ui-monospace, monospace";
 
         lossContext.fillText(
