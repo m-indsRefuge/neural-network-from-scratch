@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import numpy as np
 
+from neural_network_from_scratch.decision_boundary import extract_decision_boundary
 from neural_network_from_scratch.experiments import linear_split_experiment
 from neural_network_from_scratch.live_training import LiveTrainingSession
 from neural_network_from_scratch.live_view import (
@@ -154,7 +155,48 @@ def test_live_view_reports_completion_and_serializes() -> None:
     assert payload == {
         "epoch": state.epoch,
         "loss": state.loss,
+        "loss_history": state.loss_history,
         "is_complete": state.is_complete,
         "resolution": state.resolution,
         "field": state.field,
+        "decision_boundary": state.decision_boundary,
     }
+
+
+def test_live_view_contains_server_owned_loss_history() -> None:
+    experiment = replace(
+        linear_split_experiment(),
+        epochs=3,
+    )
+    session = LiveTrainingSession(experiment)
+
+    session.step()
+    session.step()
+
+    state = build_live_view_state(
+        session,
+        experiment,
+        resolution=5,
+    )
+
+    assert state.loss_history == session.loss_history
+    assert state.loss == session.loss_history[-1]
+
+
+def test_live_view_boundary_uses_full_precision_prediction_field() -> None:
+    experiment = linear_split_experiment()
+    session = LiveTrainingSession(experiment)
+
+    field = probe_prediction_field(
+        session.parameters,
+        resolution=5,
+    )
+    expected = extract_decision_boundary(field)
+
+    state = build_live_view_state(
+        session,
+        experiment,
+        resolution=5,
+    )
+
+    assert state.decision_boundary == expected

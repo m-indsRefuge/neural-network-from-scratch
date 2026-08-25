@@ -5,10 +5,12 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
+from neural_network_from_scratch.decision_boundary import (
+    Segment,
+    extract_decision_boundary,
+)
 from neural_network_from_scratch.experiments import Experiment
 from neural_network_from_scratch.live_training import LiveTrainingSession
-from neural_network_from_scratch.losses import binary_cross_entropy
-from neural_network_from_scratch.network import forward
 from neural_network_from_scratch.prediction_field import (
     probe_prediction_field,
 )
@@ -20,9 +22,11 @@ class LiveViewState:
 
     epoch: int
     loss: float
+    loss_history: tuple[float, ...]
     is_complete: bool
     resolution: int
     field: str
+    decision_boundary: tuple[Segment, ...]
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
@@ -54,27 +58,20 @@ def build_live_view_state(
     resolution: int,
 ) -> LiveViewState:
     """Build the current post-update browser view without training."""
-    predictions, _ = forward(
-        experiment.inputs,
-        session.parameters,
-    )
-
-    loss = binary_cross_entropy(
-        experiment.targets,
-        predictions,
-    )
-
     field = probe_prediction_field(
         session.parameters,
         resolution=resolution,
     )
+    loss_history = session.loss_history
 
     return LiveViewState(
         epoch=session.epoch,
-        loss=loss,
+        loss=loss_history[-1],
+        loss_history=loss_history,
         is_complete=session.is_complete,
         resolution=resolution,
         field=encode_probability_field(
             field.probabilities,
         ),
+        decision_boundary=extract_decision_boundary(field),
     )
