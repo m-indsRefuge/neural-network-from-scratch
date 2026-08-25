@@ -16,6 +16,7 @@ def render_live_observatory_html(
         "resolution": resolution,
         "training_inputs": experiment.inputs.tolist(),
         "training_targets": experiment.targets.ravel().tolist(),
+        "learning_rate": experiment.learning_rate,
     }
 
     serialized_data = json.dumps(
@@ -269,6 +270,345 @@ select:focus-visible {{
     }}
 }}
 </style>
+<style>
+:root {{
+    color-scheme: light;
+    --surface-page: #f4f6f7;
+    --surface-panel: #ffffff;
+    --surface-inset: #eef2f4;
+    --text-primary: #182129;
+    --text-secondary: #52616d;
+    --text-muted: #7a8790;
+    --accent-positive: #187f9c;
+    --accent-negative: #c35d52;
+    --accent-neutral: #aab5bc;
+    --accent-selection: #e29a2e;
+    --border-subtle: #d9e0e3;
+    --shadow-panel: 0 18px 40px rgba(41, 58, 66, 0.10);
+    --shadow-neuron: 0 8px 18px rgba(32, 52, 61, 0.18);
+    background: var(--surface-page);
+    color: var(--text-primary);
+}}
+
+body {{
+    min-width: 320px;
+    background:
+        linear-gradient(rgba(99, 123, 133, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99, 123, 133, 0.045) 1px, transparent 1px),
+        radial-gradient(circle at 12% 0%, #ffffff 0%, var(--surface-page) 52%);
+    background-size: 32px 32px, 32px 32px, auto;
+}}
+
+.observatory {{
+    width: min(1480px, calc(100% - 36px));
+    padding: 28px 0 40px;
+}}
+
+.header {{
+    align-items: center;
+    margin-bottom: 18px;
+}}
+
+.eyebrow {{
+    color: var(--accent-positive);
+    font-weight: 700;
+}}
+
+h1 {{
+    color: var(--text-primary);
+    font-weight: 650;
+    letter-spacing: -0.035em;
+}}
+
+.live-indicator {{
+    color: var(--text-secondary);
+}}
+
+.live-dot {{
+    background: var(--accent-positive);
+    box-shadow: 0 0 0 4px rgba(24, 127, 156, 0.12);
+}}
+
+.readout {{
+    gap: 22px;
+    padding: 12px 16px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: 0 5px 14px rgba(41, 58, 66, 0.05);
+}}
+
+.metric-label {{
+    color: var(--text-muted);
+}}
+
+.metric-value {{
+    color: var(--text-primary);
+    font-weight: 650;
+}}
+
+.viewer {{
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}}
+
+.instrument-grid {{
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(330px, 0.85fr);
+    grid-template-rows: minmax(300px, 1fr) minmax(220px, 0.72fr);
+    gap: 16px;
+}}
+
+.instrument-panel {{
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: 18px;
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-panel);
+}}
+
+.network-stage {{
+    grid-row: 1 / span 2;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+}}
+
+.decision-stage,
+.loss-stage {{
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+}}
+
+.instrument-heading {{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 15px 18px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}}
+
+.instrument-title {{
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 750;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+}}
+
+.instrument-subtitle {{
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}}
+
+.network-canvas-wrap {{
+    min-height: 0;
+    padding: 12px 14px 4px;
+    background:
+        radial-gradient(circle at 48% 6%, #ffffff 0%, var(--surface-inset) 100%);
+}}
+
+.decision-canvas-wrap {{
+    min-height: 0;
+    padding: 10px;
+    background: var(--surface-inset);
+}}
+
+.loss-canvas-wrap {{
+    min-height: 0;
+    padding: 6px 12px 4px;
+    background: var(--surface-inset);
+}}
+
+#network-canvas,
+#belief-canvas,
+#loss-canvas {{
+    display: block;
+    width: 100%;
+    height: 100%;
+}}
+
+#network-canvas {{
+    min-height: 420px;
+}}
+
+#belief-canvas {{
+    aspect-ratio: 1 / 1;
+}}
+
+.network-footer,
+.panel-footer {{
+    min-height: 44px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    font-size: 12px;
+}}
+
+.network-footer {{
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+}}
+
+.network-inspection {{
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}}
+
+.network-error {{
+    color: #a5423b;
+    font-weight: 650;
+}}
+
+.controls {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-top: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-panel);
+}}
+
+button,
+select {{
+    border-color: var(--border-subtle);
+    background: #ffffff;
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(41, 58, 66, 0.05);
+}}
+
+button:hover:not(:disabled) {{
+    border-color: var(--accent-positive);
+    background: #f6fbfc;
+}}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {{
+    outline: 2px solid var(--accent-selection);
+    outline-offset: 3px;
+}}
+
+#train-button {{
+    border-color: var(--accent-positive);
+    background: var(--accent-positive);
+    color: #ffffff;
+}}
+
+#train-button:hover:not(:disabled) {{
+    background: #116a84;
+}}
+
+.control-divider {{
+    width: 1px;
+    align-self: stretch;
+    background: var(--border-subtle);
+}}
+
+.overlay-control {{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 650;
+}}
+
+.overlay-control input {{
+    accent-color: var(--accent-positive);
+}}
+
+.status-bar {{
+    margin-top: 12px;
+    padding: 10px 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.74);
+    color: var(--text-secondary);
+}}
+
+.status-label {{
+    color: var(--text-muted);
+}}
+
+.legend {{
+    margin: 0;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}}
+
+.class-zero {{
+    background: var(--accent-negative);
+}}
+
+.class-one {{
+    background: var(--accent-positive);
+}}
+
+.note {{
+    margin: 16px 2px 0;
+    color: var(--text-muted);
+}}
+
+@media (max-width: 900px) {{
+    .instrument-grid {{
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+    }}
+
+    .network-stage {{
+        grid-row: auto;
+    }}
+
+    #network-canvas {{
+        min-height: 360px;
+    }}
+}}
+
+@media (max-width: 700px) {{
+    .observatory {{
+        width: min(100% - 20px, 1480px);
+        padding-top: 16px;
+    }}
+
+    .readout {{
+        display: inline-flex;
+        margin-top: 14px;
+    }}
+
+    .instrument-grid {{
+        gap: 12px;
+    }}
+
+    .network-footer {{
+        display: block;
+    }}
+
+    .network-error {{
+        display: block;
+        margin-top: 6px;
+    }}
+
+    .control-divider {{
+        display: none;
+    }}
+}}
+</style>
 </head>
 <body>
 <main class="observatory">
@@ -295,28 +635,104 @@ select:focus-visible {{
         </div>
     </header>
 
-    <section class="viewer">
-        <div class="dynamics-grid">
-            <div class="stage">
-                <canvas
-                    id="belief-canvas"
-                    width="640"
-                    height="640"
-                    aria-label="Live neural network prediction field"
-                ></canvas>
-            </div>
+    <section class="viewer" aria-label="Neural Observatory instruments">
+        <div class="instrument-grid">
+            <section
+                class="instrument-panel network-stage"
+                aria-labelledby="network-title"
+            >
+                <div class="instrument-heading">
+                    <h2 class="instrument-title" id="network-title">
+                        Network Observatory
+                    </h2>
+                    <span class="instrument-subtitle">2 → 16 → 16 → 1</span>
+                </div>
 
-            <div class="loss-stage">
-                <canvas
-                    id="loss-canvas"
-                    width="480"
-                    height="640"
-                    aria-label="Live binary cross-entropy loss history"
-                ></canvas>
-            </div>
+                <div class="network-canvas-wrap">
+                    <canvas
+                        id="network-canvas"
+                        width="900"
+                        height="620"
+                        aria-label="Live neural network internals"
+                    ></canvas>
+                </div>
+
+                <div class="network-footer">
+                    <span
+                        class="network-inspection"
+                        id="network-inspection"
+                        aria-live="polite"
+                    >
+                        Hover a neuron or connection to inspect live values.
+                    </span>
+                    <span
+                        class="network-error"
+                        id="network-error"
+                        role="alert"
+                        hidden
+                    ></span>
+                </div>
+            </section>
+
+            <section
+                class="instrument-panel decision-stage"
+                aria-labelledby="decision-title"
+            >
+                <div class="instrument-heading">
+                    <h2 class="instrument-title" id="decision-title">
+                        Decision Surface
+                    </h2>
+                    <span class="instrument-subtitle">p = 0.5 boundary</span>
+                </div>
+
+                <div class="decision-canvas-wrap">
+                    <canvas
+                        id="belief-canvas"
+                        width="520"
+                        height="520"
+                        aria-label="Live neural network prediction field"
+                    ></canvas>
+                </div>
+
+                <div class="legend">
+                    <span class="legend-item">
+                        <span class="dot class-zero"></span>
+                        Class 0 samples
+                    </span>
+                    <span class="legend-item">
+                        <span class="dot class-one"></span>
+                        Class 1 samples
+                    </span>
+                </div>
+            </section>
+
+            <section
+                class="instrument-panel loss-stage"
+                aria-labelledby="loss-title"
+            >
+                <div class="instrument-heading">
+                    <h2 class="instrument-title" id="loss-title">
+                        Learning Dynamics
+                    </h2>
+                    <span class="instrument-subtitle">Linear BCE</span>
+                </div>
+
+                <div class="loss-canvas-wrap">
+                    <canvas
+                        id="loss-canvas"
+                        width="520"
+                        height="270"
+                        aria-label="Live binary cross-entropy loss history"
+                    ></canvas>
+                </div>
+
+                <div class="panel-footer">
+                    Full post-update loss history from epoch 0 onward.
+                </div>
+            </section>
         </div>
 
-        <div class="controls">
+        <div class="controls" aria-label="Training and network controls">
             <button type="button" id="step-button" disabled>
                 Step
             </button>
@@ -335,6 +751,26 @@ select:focus-visible {{
                 <option value="100" selected>10×</option>
                 <option value="0">Max</option>
             </select>
+
+            <span class="control-divider" aria-hidden="true"></span>
+
+            <button
+                type="button"
+                id="aggregate-button"
+                aria-pressed="true"
+            >
+                Aggregate
+            </button>
+
+            <label class="overlay-control">
+                <input id="weight-overlay-toggle" type="checkbox" checked>
+                Weights
+            </label>
+
+            <label class="overlay-control">
+                <input id="gradient-overlay-toggle" type="checkbox" checked>
+                Gradients
+            </label>
         </div>
 
         <div class="status-bar">
@@ -345,20 +781,8 @@ select:focus-visible {{
         </div>
     </section>
 
-    <div class="legend">
-        <span class="legend-item">
-            <span class="dot class-zero"></span>
-            Class 0 training samples
-        </span>
-
-        <span class="legend-item">
-            <span class="dot class-one"></span>
-            Class 1 training samples
-        </span>
-    </div>
-
     <p class="note">
-        Each displayed trained state is produced by the running Python NN-01.
+        Every displayed value is observed from the running handwritten Python NN-01.
     </p>
 </main>
 

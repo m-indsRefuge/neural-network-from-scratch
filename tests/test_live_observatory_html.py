@@ -44,6 +44,7 @@ def test_live_viewer_embeds_only_immutable_experiment_data() -> None:
     assert data["resolution"] == 5
     assert data["training_inputs"] == experiment.inputs.tolist()
     assert data["training_targets"] == experiment.targets.ravel().tolist()
+    assert data["learning_rate"] == experiment.learning_rate
 
     assert "frames" not in data
     assert "probabilities" not in data
@@ -107,6 +108,51 @@ def test_live_viewer_has_learning_dynamics_surfaces() -> None:
     assert 'id="loss-canvas"' in html
     assert "function drawDecisionBoundary" in html
     assert "function drawLossHistory" in html
+
+
+def test_live_viewer_has_scientific_network_instruments() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert 'id="network-canvas"' in html
+    assert 'id="belief-canvas"' in html
+    assert 'id="loss-canvas"' in html
+
+    assert 'id="aggregate-button"' in html
+    assert 'aria-pressed="true"' in html
+    assert 'id="weight-overlay-toggle"' in html
+    assert 'id="gradient-overlay-toggle"' in html
+    assert 'id="network-inspection"' in html
+    assert 'id="network-error"' in html
+
+
+def test_live_viewer_defines_scientific_light_tokens_and_responsive_layout() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    for token in (
+        "--surface-page",
+        "--surface-panel",
+        "--surface-inset",
+        "--text-primary",
+        "--text-secondary",
+        "--text-muted",
+        "--accent-positive",
+        "--accent-negative",
+        "--accent-neutral",
+        "--accent-selection",
+        "--border-subtle",
+        "--shadow-panel",
+        "--shadow-neuron",
+    ):
+        assert token in html
+
+    assert "@media (max-width: 900px)" in html
+    assert "@media (max-width: 700px)" in html
 
 
 def test_browser_consumes_server_learning_dynamics() -> None:
