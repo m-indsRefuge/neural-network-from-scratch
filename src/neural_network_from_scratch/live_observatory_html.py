@@ -819,6 +819,15 @@ input:focus-visible {{
         "OUTPUT · 1",
     ];
     const WEIGHT_DISPLAY_SCALE = 0.75;
+    const GRADIENT_DISPLAY_SCALE = 0.025;
+    const NETWORK_TRANSITION_DURATION = 220;
+
+    const weightOverlayToggle = document.getElementById(
+        "weight-overlay-toggle",
+    );
+    const gradientOverlayToggle = document.getElementById(
+        "gradient-overlay-toggle",
+    );
 
     const stepButton = document.getElementById("step-button");
     const trainButton = document.getElementById("train-button");
@@ -836,6 +845,12 @@ input:focus-visible {{
     let currentState = null;
     let running = false;
     let requestInFlight = false;
+    let networkPresentationState = null;
+    let networkStateQueue = [];
+    let networkAnimationFrame = null;
+    let currentNetworkLayout = null;
+    let currentNetworkConnections = [];
+    let hoveredNetworkItem = null;
 
     function delay(milliseconds) {{
         return new Promise((resolve) => {{
@@ -1033,58 +1048,281 @@ input:focus-visible {{
         networkContext.restore();
     }}
 
-    function drawNetworkEdges(network, layout) {{
-        [
-            [network.parameters.w1, 0, 1],
-            [network.parameters.w2, 1, 2],
-            [network.parameters.w3, 2, 3],
-        ].forEach(([matrix, sourceLayer, targetLayer]) => {{
-            matrix.forEach((row, sourceIndex) => {{
+    function interpolateNumber(start, end, progress) {{
+        return start + (end - start) * progress;
+    }}
+
+    function buildNetworkConnections(network, layout) {{
+        const connections = [];
+        const edgeMatrices = [
+            {{
+                matrixName: "w1",
+                weights: network.parameters.w1,
+                gradients: network.gradients.w1,
+                sourceLayer: 0,
+                targetLayer: 1,
+            }},
+            {{
+                matrixName: "w2",
+                weights: network.parameters.w2,
+                gradients: network.gradients.w2,
+                sourceLayer: 1,
+                targetLayer: 2,
+            }},
+            {{
+                matrixName: "w3",
+                weights: network.parameters.w3,
+                gradients: network.gradients.w3,
+                sourceLayer: 2,
+                targetLayer: 3,
+            }},
+        ];
+
+        edgeMatrices.forEach((edgeMatrix) => {{
+            edgeMatrix.weights.forEach((row, sourceIndex) => {{
                 row.forEach((weight, targetIndex) => {{
-                    const source = layout[sourceLayer][sourceIndex];
-                    const target = layout[targetLayer][targetIndex];
-                    const presentation = weightPresentation(weight);
-
-                    networkContext.save();
-                    traceConnection(source, target);
-                    networkContext.lineWidth = 1;
-                    networkContext.strokeStyle = "rgba(137, 151, 158, 0.20)";
-                    networkContext.stroke();
-
-                    traceConnection(source, target);
-                    networkContext.lineWidth = 0.45 + presentation.intensity * 2.9;
-                    networkContext.strokeStyle = presentation.color;
-                    networkContext.globalAlpha = 0.08 + presentation.intensity * 0.72;
-                    networkContext.stroke();
-                    networkContext.restore();
+                    connections.push({{
+                        key: edgeMatrix.matrixName
+                            + ":"
+                            + sourceIndex
+                            + "-"
+                            + targetIndex,
+                        matrixName: edgeMatrix.matrixName,
+                        sourceLayer: edgeMatrix.sourceLayer,
+                        targetLayer: edgeMatrix.targetLayer,
+                        sourceIndex,
+                        targetIndex,
+                        source: layout[edgeMatrix.sourceLayer][sourceIndex],
+                        target: layout[edgeMatrix.targetLayer][targetIndex],
+                        weight,
+                        gradient: edgeMatrix.gradients[sourceIndex][targetIndex],
+                    }});
                 }});
             }});
         }});
+
+        return connections;
     }}
 
-    function aggregateNodePresentation(network, layerIndex, nodeIndex) {{
-        const layerKey = NETWORK_LAYER_KEYS[layerIndex];
-        const summary = network.activation_summary[layerKey];
+    function connectionIsEmphasized(connection) {{
+        if (hoveredNetworkItem === null) {{
+            return true;
+        }}
+
+        if (hoveredNetworkItem.kind === "connection") {{
+            return hoveredNetworkItem.key === connection.key;
+        }}
+
+        return (
+            connection.sourceLayer === hoveredNetworkItem.layerIndex
+            && connection.sourceIndex === hoveredNetworkItem.nodeIndex
+        ) || (
+            connection.targetLayer === hoveredNetworkItem.layerIndex
+            && connection.targetIndex === hoveredNetworkItem.nodeIndex
+        );
+    }}
+
+    function presentationConnectionValue(
+        connection,
+        previousNetwork,
+        valueName,
+        progress,
+    ) {{
+        const currentValue = connection[valueName];
+
+        if (previousNetwork === null) {{
+            return currentValue;
+        }}
+
+        const previousValue = previousNetwork[
+            valueName === "weight" ? "parameters" : "gradients"
+        ][connection.matrixName][connection.sourceIndex][connection.targetIndex];
+
+        return interpolateNumber(
+            previousValue,
+            currentValue,
+            progress,
+        );
+    }}
+
+    function drawNetworkEdges(connections, previousNetwork, progress) {{
+        connections.forEach((connection) => {{
+            const weight = presentationConnectionValue(
+                connection,
+                previousNetwork,
+                "weight",
+                progress,
+            );
+            const presentation = weightPresentation(weight);
+            const emphasized = connectionIsEmphasized(connection);
+            const emphasis = emphasized ? 1 : 0.16;
+
+            networkContext.save();
+            traceConnection(connection.source, connection.target);
+            networkContext.lineWidth = 1;
+            networkContext.strokeStyle = "rgba(137, 151, 158, 0.20)";
+            networkContext.globalAlpha = emphasis;
+            networkContext.stroke();
+
+            if (weightOverlayToggle.checked) {{
+                traceConnection(connection.source, connection.target);
+                networkContext.lineWidth = 0.45 + presentation.intensity * 2.9;
+                networkContext.strokeStyle = presentation.color;
+                networkContext.globalAlpha = (
+                    0.08 + presentation.intensity * 0.72
+                ) * emphasis;
+                networkContext.stroke();
+            }}
+
+            networkContext.restore();
+        }});
+    }}
+
+    function gradientPresentation(gradient) {{
+        const intensity = 1 - Math.exp(
+            -Math.abs(gradient) / GRADIENT_DISPLAY_SCALE
+        );
 
         return {{
-            activation: summary.mean[nodeIndex],
-            spread: summary.spread[nodeIndex],
+            intensity,
+            color: gradient < 0
+                ? "rgb(145, 84, 168)"
+                : "rgb(226, 154, 46)",
         }};
     }}
 
-    function drawNetworkNodes(network, layout) {{
+    function drawGradientOverlay(connections, previousNetwork, progress) {{
+        if (!gradientOverlayToggle.checked) {{
+            return;
+        }}
+
+        connections.forEach((connection) => {{
+            const gradient = presentationConnectionValue(
+                connection,
+                previousNetwork,
+                "gradient",
+                progress,
+            );
+            const presentation = gradientPresentation(gradient);
+            const emphasized = connectionIsEmphasized(connection);
+            const emphasis = emphasized ? 1 : 0.12;
+            const pulse = 0.58 + (1 - progress) * 0.42;
+
+            networkContext.save();
+            traceConnection(connection.source, connection.target);
+            networkContext.lineWidth = 0.35 + presentation.intensity * 1.55;
+            networkContext.strokeStyle = presentation.color;
+            networkContext.globalAlpha = (
+                0.05 + presentation.intensity * 0.48
+            ) * pulse * emphasis;
+            networkContext.stroke();
+            networkContext.restore();
+        }});
+    }}
+
+    function aggregateNodePresentation(
+        network,
+        previousNetwork,
+        progress,
+        layerIndex,
+        nodeIndex,
+    ) {{
+        const layerKey = NETWORK_LAYER_KEYS[layerIndex];
+        const summary = network.activation_summary[layerKey];
+
+        if (previousNetwork === null) {{
+            return {{
+                activation: summary.mean[nodeIndex],
+                spread: summary.spread[nodeIndex],
+            }};
+        }}
+
+        const previousSummary = previousNetwork.activation_summary[layerKey];
+
+        return {{
+            activation: interpolateNumber(
+                previousSummary.mean[nodeIndex],
+                summary.mean[nodeIndex],
+                progress,
+            ),
+            spread: interpolateNumber(
+                previousSummary.spread[nodeIndex],
+                summary.spread[nodeIndex],
+                progress,
+            ),
+        }};
+    }}
+
+    function nodeBias(network, layerIndex, nodeIndex) {{
+        const biasMatrices = [
+            null,
+            {{
+                values: network.parameters.b1[0],
+                gradients: network.gradients.b1[0],
+            }},
+            {{
+                values: network.parameters.b2[0],
+                gradients: network.gradients.b2[0],
+            }},
+            {{
+                values: network.parameters.b3[0],
+                gradients: network.gradients.b3[0],
+            }},
+        ];
+        const bias = biasMatrices[layerIndex];
+
+        return bias === null
+            ? null
+            : {{
+                value: bias.values[nodeIndex],
+                gradient: bias.gradients[nodeIndex],
+            }};
+    }}
+
+    function nodeIsEmphasized(node) {{
+        if (hoveredNetworkItem === null) {{
+            return true;
+        }}
+
+        if (hoveredNetworkItem.kind === "node") {{
+            return (
+                hoveredNetworkItem.layerIndex === node.layerIndex
+                && hoveredNetworkItem.nodeIndex === node.nodeIndex
+            );
+        }}
+
+        return (
+            hoveredNetworkItem.sourceLayer === node.layerIndex
+            && hoveredNetworkItem.sourceIndex === node.nodeIndex
+        ) || (
+            hoveredNetworkItem.targetLayer === node.layerIndex
+            && hoveredNetworkItem.targetIndex === node.nodeIndex
+        );
+    }}
+
+    function drawNetworkNodes(network, layout, previousNetwork, progress) {{
         layout.forEach((layer) => {{
             layer.forEach((node) => {{
                 const values = aggregateNodePresentation(
                     network,
+                    previousNetwork,
+                    progress,
                     node.layerIndex,
                     node.nodeIndex,
                 );
                 const activation = Math.max(0, Math.min(1, values.activation));
                 const spread = Math.max(0, Math.min(1, values.spread));
                 const radius = node.layerIndex === 3 ? 16 : 11;
+                const emphasized = nodeIsEmphasized(node);
+                const emphasis = emphasized ? 1 : 0.30;
+                const bias = nodeBias(
+                    network,
+                    node.layerIndex,
+                    node.nodeIndex,
+                );
 
                 networkContext.save();
+                networkContext.globalAlpha = emphasis;
                 networkContext.beginPath();
                 networkContext.arc(
                     node.x + 4,
@@ -1139,16 +1377,43 @@ input:focus-visible {{
                 );
                 networkContext.fillStyle = gradient;
                 networkContext.fill();
-                networkContext.lineWidth = 1.2;
+                networkContext.lineWidth = emphasized ? 2.2 : 1.2;
                 networkContext.strokeStyle = "rgba(255, 255, 255, 0.85)";
                 networkContext.stroke();
+
+                if (bias !== null) {{
+                    const biasPresentation = weightPresentation(bias.value);
+                    const biasGradient = gradientPresentation(bias.gradient);
+
+                    networkContext.fillStyle = biasPresentation.color;
+                    networkContext.globalAlpha = 0.28 + biasPresentation.intensity * 0.60;
+                    networkContext.fillRect(
+                        node.x + radius + 5,
+                        node.y - 6,
+                        3,
+                        12,
+                    );
+                    networkContext.fillStyle = biasGradient.color;
+                    networkContext.globalAlpha = 0.20 + biasGradient.intensity * 0.64;
+                    networkContext.fillRect(
+                        node.x + radius + 9,
+                        node.y - 4,
+                        2,
+                        8,
+                    );
+                }}
+
                 networkContext.restore();
             }});
         }});
     }}
 
-    function drawNetwork(network) {{
+    function drawNetwork(network, previousNetwork = null, progress = 1) {{
         const layout = buildNetworkLayout();
+        const connections = buildNetworkConnections(network, layout);
+
+        currentNetworkLayout = layout;
+        currentNetworkConnections = connections;
 
         networkContext.clearRect(
             0,
@@ -1157,23 +1422,273 @@ input:focus-visible {{
             networkCanvas.height,
         );
         drawStructuralDepthGuides(layout);
-        drawNetworkEdges(network, layout);
-        drawNetworkNodes(network, layout);
+        drawNetworkEdges(connections, previousNetwork, progress);
+        drawGradientOverlay(connections, previousNetwork, progress);
+        drawNetworkNodes(network, layout, previousNetwork, progress);
+    }}
+
+    function formatRawValue(value) {{
+        return String(value);
+    }}
+
+    function networkNodeLabel(layerIndex, nodeIndex) {{
+        const names = ["Input", "Hidden 1", "Hidden 2", "Output"];
+        return names[layerIndex] + "[" + nodeIndex + "]";
+    }}
+
+    function renderNetworkInspection(network) {{
+        if (hoveredNetworkItem === null) {{
+            networkInspection.textContent = "Aggregate batch activity · hover a neuron or connection";
+            return;
+        }}
+
+        if (hoveredNetworkItem.kind === "node") {{
+            const layerKey = NETWORK_LAYER_KEYS[hoveredNetworkItem.layerIndex];
+            const summary = network.activation_summary[layerKey];
+            const index = hoveredNetworkItem.nodeIndex;
+            const bias = nodeBias(
+                network,
+                hoveredNetworkItem.layerIndex,
+                index,
+            );
+            const biasReadout = bias === null
+                ? ""
+                : " · bias "
+                    + formatRawValue(bias.value)
+                    + " · bias gradient "
+                    + formatRawValue(bias.gradient);
+
+            networkInspection.textContent = networkNodeLabel(
+                hoveredNetworkItem.layerIndex,
+                index,
+            )
+                + " · mean "
+                + formatRawValue(summary.mean[index])
+                + " · min "
+                + formatRawValue(summary.min[index])
+                + " · max "
+                + formatRawValue(summary.max[index])
+                + " · spread "
+                + formatRawValue(summary.spread[index])
+                + biasReadout;
+            return;
+        }}
+
+        const connection = hoveredNetworkItem;
+        const update = -data.learning_rate * connection.gradient;
+
+        networkInspection.textContent = networkNodeLabel(
+            connection.sourceLayer,
+            connection.sourceIndex,
+        )
+            + " → "
+            + networkNodeLabel(
+                connection.targetLayer,
+                connection.targetIndex,
+            )
+            + " · weight "
+            + formatRawValue(connection.weight)
+            + " · gradient "
+            + formatRawValue(connection.gradient)
+            + " · update "
+            + formatRawValue(update);
+    }}
+
+    function pointOnConnection(connection, progress) {{
+        const inverse = 1 - progress;
+        const bend = (connection.target.x - connection.source.x) * 0.38;
+        const controlA = {{
+            x: connection.source.x + bend,
+            y: connection.source.y,
+        }};
+        const controlB = {{
+            x: connection.target.x - bend,
+            y: connection.target.y,
+        }};
+
+        return {{
+            x: inverse ** 3 * connection.source.x
+                + 3 * inverse ** 2 * progress * controlA.x
+                + 3 * inverse * progress ** 2 * controlB.x
+                + progress ** 3 * connection.target.x,
+            y: inverse ** 3 * connection.source.y
+                + 3 * inverse ** 2 * progress * controlA.y
+                + 3 * inverse * progress ** 2 * controlB.y
+                + progress ** 3 * connection.target.y,
+        }};
+    }}
+
+    function distanceToSegment(point, start, end) {{
+        const deltaX = end.x - start.x;
+        const deltaY = end.y - start.y;
+        const lengthSquared = deltaX ** 2 + deltaY ** 2;
+        const projection = lengthSquared === 0
+            ? 0
+            : Math.max(
+                0,
+                Math.min(
+                    1,
+                    ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY)
+                        / lengthSquared,
+                ),
+            );
+        const nearestX = start.x + projection * deltaX;
+        const nearestY = start.y + projection * deltaY;
+
+        return Math.hypot(point.x - nearestX, point.y - nearestY);
+    }}
+
+    function connectionDistance(point, connection) {{
+        let shortest = Number.POSITIVE_INFINITY;
+        let previous = pointOnConnection(connection, 0);
+
+        for (let step = 1; step <= 14; step += 1) {{
+            const next = pointOnConnection(connection, step / 14);
+            shortest = Math.min(
+                shortest,
+                distanceToSegment(point, previous, next),
+            );
+            previous = next;
+        }}
+
+        return shortest;
+    }}
+
+    function findNetworkHover(point) {{
+        if (currentNetworkLayout === null) {{
+            return null;
+        }}
+
+        for (const layer of currentNetworkLayout) {{
+            for (const node of layer) {{
+                const radius = node.layerIndex === 3 ? 21 : 17;
+
+                if (Math.hypot(point.x - node.x, point.y - node.y) <= radius) {{
+                    return {{
+                        kind: "node",
+                        layerIndex: node.layerIndex,
+                        nodeIndex: node.nodeIndex,
+                    }};
+                }}
+            }}
+        }}
+
+        let closest = null;
+        let closestDistance = 6;
+
+        currentNetworkConnections.forEach((connection) => {{
+            const distance = connectionDistance(point, connection);
+
+            if (distance < closestDistance) {{
+                closest = connection;
+                closestDistance = distance;
+            }}
+        }});
+
+        return closest === null
+            ? null
+            : {{
+                kind: "connection",
+                ...closest,
+            }};
+    }}
+
+    function sameNetworkHover(left, right) {{
+        if (left === null || right === null) {{
+            return left === right;
+        }}
+
+        if (left.kind !== right.kind) {{
+            return false;
+        }}
+
+        return left.kind === "node"
+            ? left.layerIndex === right.layerIndex
+                && left.nodeIndex === right.nodeIndex
+            : left.key === right.key;
+    }}
+
+    function redrawNetworkPresentation() {{
+        if (
+            networkPresentationState === null
+            || networkAnimationFrame !== null
+        ) {{
+            return;
+        }}
+
+        drawNetwork(networkPresentationState.network);
+        renderNetworkInspection(networkPresentationState.network);
+    }}
+
+    function queueServerState(state) {{
+        if (networkPresentationState === null) {{
+            networkPresentationState = state;
+            drawNetwork(state.network);
+            renderNetworkInspection(state.network);
+            return;
+        }}
+
+        networkStateQueue.push(state);
+
+        if (networkAnimationFrame === null) {{
+            startNextNetworkTransition();
+        }}
+    }}
+
+    function startNextNetworkTransition() {{
+        const nextState = networkStateQueue.shift();
+
+        if (nextState === undefined) {{
+            networkAnimationFrame = null;
+            return;
+        }}
+
+        const previousState = networkPresentationState;
+        const startedAt = performance.now();
+
+        const animate = (timestamp) => {{
+            const progress = Math.min(
+                1,
+                (timestamp - startedAt) / NETWORK_TRANSITION_DURATION,
+            );
+
+            drawNetwork(
+                nextState.network,
+                previousState.network,
+                progress,
+            );
+            renderNetworkInspection(nextState.network);
+
+            if (progress < 1) {{
+                networkAnimationFrame = window.requestAnimationFrame(animate);
+                return;
+            }}
+
+            networkPresentationState = nextState;
+            networkAnimationFrame = null;
+
+            if (networkStateQueue.length > 0) {{
+                startNextNetworkTransition();
+            }}
+        }};
+
+        networkAnimationFrame = window.requestAnimationFrame(animate);
     }}
 
     function renderNetwork(state) {{
-        if (state.network_error !== null) {{
+        if (
+            typeof state.network_error === "string"
+            && state.network_error.length > 0
+        ) {{
             networkError.textContent = state.network_error;
             networkError.hidden = false;
             return;
         }}
 
         try {{
-            const network = validateNetworkTelemetry(state.network);
-
-            drawNetwork(network);
+            validateNetworkTelemetry(state.network);
             networkError.hidden = true;
-            networkInspection.textContent = "Aggregate batch activity · hover inspection pending";
+            queueServerState(state);
         }}
         catch (error) {{
             networkContext.clearRect(
@@ -1188,6 +1703,27 @@ input:focus-visible {{
             networkError.hidden = false;
         }}
     }}
+
+    networkCanvas.addEventListener("mousemove", (event) => {{
+        const bounds = networkCanvas.getBoundingClientRect();
+        const point = {{
+            x: (event.clientX - bounds.left) * networkCanvas.width / bounds.width,
+            y: (event.clientY - bounds.top) * networkCanvas.height / bounds.height,
+        }};
+        const nextHover = findNetworkHover(point);
+
+        if (!sameNetworkHover(hoveredNetworkItem, nextHover)) {{
+            hoveredNetworkItem = nextHover;
+            redrawNetworkPresentation();
+        }}
+    }});
+
+    networkCanvas.addEventListener("mouseleave", () => {{
+        if (hoveredNetworkItem !== null) {{
+            hoveredNetworkItem = null;
+            redrawNetworkPresentation();
+        }}
+    }});
 
     function probabilityColor(value) {{
         const probability = value / 255;

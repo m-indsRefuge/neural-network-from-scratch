@@ -186,6 +186,46 @@ def test_network_renderer_rejects_non_nn01_topology_without_substitution() -> No
     assert "Network telemetry matrix" in html
 
 
+def test_network_renderer_has_distinct_real_gradient_and_inspection_channels() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "function drawGradientOverlay" in html
+    assert "function renderNetworkInspection" in html
+    assert "function queueServerState" in html
+    assert "requestAnimationFrame" in html
+    assert "data.learning_rate" in html
+
+    for matrix_name in (
+        "network.gradients.w1",
+        "network.gradients.w2",
+        "network.gradients.w3",
+        "network.parameters.b1",
+        "network.parameters.b2",
+        "network.parameters.b3",
+    ):
+        assert matrix_name in html
+
+
+def test_browser_never_implements_nn_math_or_contour_extraction() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    for forbidden_implementation in (
+        "function forward",
+        "function backward",
+        "function sigmoid",
+        "function computeGradients",
+        "marchingSquares",
+        "computeDecisionBoundary",
+    ):
+        assert forbidden_implementation not in html
+
+
 def test_browser_consumes_server_learning_dynamics() -> None:
     html = render_live_observatory_html(
         linear_split_experiment(),
