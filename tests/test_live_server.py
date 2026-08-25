@@ -14,7 +14,7 @@ from neural_network_from_scratch.live_server import (
     LiveObservatoryServer,
     create_live_server,
 )
-from neural_network_from_scratch.network import Parameters
+from neural_network_from_scratch.network import Parameters, backward, forward
 
 
 @contextmanager
@@ -76,6 +76,20 @@ def _assert_parameters_equal(
         )
 
 
+def _copy_parameters(
+    parameters: Parameters,
+) -> Parameters:
+    return Parameters(
+        **{
+            parameter.name: getattr(
+                parameters,
+                parameter.name,
+            ).copy()
+            for parameter in fields(Parameters)
+        }
+    )
+
+
 def test_server_binds_only_to_loopback() -> None:
     server = create_live_server(
         port=0,
@@ -111,6 +125,66 @@ def test_get_state_does_not_advance_training() -> None:
         assert state["epoch"] == 0
         assert state["resolution"] == 5
         assert server.session.epoch == before
+
+
+def test_get_state_returns_deterministic_current_network_without_mutation() -> None:
+    with _running_server(
+        epochs=3,
+        resolution=5,
+    ) as (server, base_url):
+        before_epoch = server.session.epoch
+        before_history = server.session.loss_history
+        before_parameters = _copy_parameters(
+            server.session.parameters,
+        )
+
+        first = _read_json(f"{base_url}/api/state")
+        second = _read_json(f"{base_url}/api/state")
+
+        assert first["network_error"] is None
+        assert first["network"]["topology"] == [2, 16, 16, 1]
+        assert first["network"] == second["network"]
+        assert server.session.epoch == before_epoch
+        assert server.session.loss_history == before_history
+        _assert_parameters_equal(
+            server.session.parameters,
+            before_parameters,
+        )
+
+
+def test_post_step_network_telemetry_uses_current_parameters() -> None:
+    with _running_server(
+        epochs=3,
+        resolution=5,
+    ) as (server, base_url):
+        state = _post_json(f"{base_url}/api/step")
+
+        predictions, cache = forward(
+            server.experiment.inputs,
+            server.session.parameters,
+        )
+        gradients = backward(
+            server.experiment.targets,
+            server.session.parameters,
+            cache,
+        )
+
+        assert state["epoch"] == server.session.epoch == 1
+        assert state["network_error"] is None
+        np.testing.assert_allclose(
+            state["network"]["activations"]["output"],
+            predictions,
+        )
+
+        for parameter in fields(Parameters):
+            np.testing.assert_allclose(
+                state["network"]["parameters"][parameter.name],
+                getattr(server.session.parameters, parameter.name),
+            )
+            np.testing.assert_allclose(
+                state["network"]["gradients"][parameter.name],
+                getattr(gradients, parameter.name),
+            )
 
 
 def test_post_step_advances_exactly_once() -> None:

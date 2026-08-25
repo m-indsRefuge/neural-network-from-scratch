@@ -1,7 +1,7 @@
 """Post-update visual state for the live Neural Observatory."""
 
 import base64
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -11,6 +11,11 @@ from neural_network_from_scratch.decision_boundary import (
 )
 from neural_network_from_scratch.experiments import Experiment
 from neural_network_from_scratch.live_training import LiveTrainingSession
+from neural_network_from_scratch.network_telemetry import (
+    NetworkTelemetry,
+    NetworkTelemetryError,
+    probe_network_telemetry,
+)
 from neural_network_from_scratch.prediction_field import (
     probe_prediction_field,
 )
@@ -27,10 +32,26 @@ class LiveViewState:
     resolution: int
     field: str
     decision_boundary: tuple[Segment, ...]
+    network: NetworkTelemetry | None
+    network_error: str | None
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
-        return asdict(self)
+        return {
+            "epoch": self.epoch,
+            "loss": self.loss,
+            "loss_history": self.loss_history,
+            "is_complete": self.is_complete,
+            "resolution": self.resolution,
+            "field": self.field,
+            "decision_boundary": self.decision_boundary,
+            "network": (
+                None
+                if self.network is None
+                else self.network.to_dict()
+            ),
+            "network_error": self.network_error,
+        }
 
 
 def encode_probability_field(
@@ -58,11 +79,22 @@ def build_live_view_state(
     resolution: int,
 ) -> LiveViewState:
     """Build the current post-update browser view without training."""
+    parameters = session.parameters
     field = probe_prediction_field(
-        session.parameters,
+        parameters,
         resolution=resolution,
     )
     loss_history = session.loss_history
+
+    try:
+        network = probe_network_telemetry(
+            experiment,
+            parameters,
+        )
+        network_error = None
+    except NetworkTelemetryError as error:
+        network = None
+        network_error = str(error)
 
     return LiveViewState(
         epoch=session.epoch,
@@ -74,4 +106,6 @@ def build_live_view_state(
             field.probabilities,
         ),
         decision_boundary=extract_decision_boundary(field),
+        network=network,
+        network_error=network_error,
     )
