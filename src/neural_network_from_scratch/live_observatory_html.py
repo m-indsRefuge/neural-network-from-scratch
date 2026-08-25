@@ -543,6 +543,29 @@ select:focus-visible {{
         lossContext.lineWidth = 2;
         lossContext.stroke();
 
+        const currentEpoch = history.length - 1;
+        const currentLoss = history[currentEpoch];
+
+        const currentX =
+            left
+            + (currentEpoch / maxEpoch) * plotWidth;
+
+        const currentY =
+            height
+            - bottom
+            - (currentLoss / maxLoss) * plotHeight;
+
+        lossContext.beginPath();
+        lossContext.arc(
+            currentX,
+            currentY,
+            4.5,
+            0,
+            Math.PI * 2
+        );
+        lossContext.fillStyle = "rgb(82,230,255)";
+        lossContext.fill();
+
         lossContext.fillStyle = "rgb(155,166,190)";
         lossContext.font = "12px ui-monospace, monospace";
 

@@ -120,3 +120,14 @@ def test_browser_consumes_server_learning_dynamics() -> None:
 
     assert "marchingSquares" not in html
     assert "computeDecisionBoundary" not in html
+
+
+def test_loss_history_draws_visible_current_point() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "function drawLossHistory" in html
+    assert "lossContext.arc(" in html
+    assert "lossContext.fill()" in html
