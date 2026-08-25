@@ -800,6 +800,26 @@ input:focus-visible {{
     const lossCanvas = document.getElementById("loss-canvas");
     const lossContext = lossCanvas.getContext("2d");
 
+    const networkCanvas = document.getElementById("network-canvas");
+    const networkContext = networkCanvas.getContext("2d");
+    const networkInspection = document.getElementById("network-inspection");
+    const networkError = document.getElementById("network-error");
+
+    const NETWORK_TOPOLOGY = [2, 16, 16, 1];
+    const NETWORK_LAYER_KEYS = [
+        "input",
+        "hidden_1",
+        "hidden_2",
+        "output",
+    ];
+    const NETWORK_LAYER_LABELS = [
+        "INPUT · 2",
+        "HIDDEN 1 · 16",
+        "HIDDEN 2 · 16",
+        "OUTPUT · 1",
+    ];
+    const WEIGHT_DISPLAY_SCALE = 0.75;
+
     const stepButton = document.getElementById("step-button");
     const trainButton = document.getElementById("train-button");
     const pauseButton = document.getElementById("pause-button");
@@ -832,6 +852,341 @@ input:focus-visible {{
         }}
 
         return values;
+    }}
+
+    function validateNetworkMatrix(name, matrix, rows, columns) {{
+        const hasExpectedRows = Array.isArray(matrix)
+            && matrix.length === rows;
+        const hasExpectedColumns = hasExpectedRows
+            && matrix.every((row) => {{
+                return Array.isArray(row)
+                    && row.length === columns
+                    && row.every(Number.isFinite);
+            }});
+
+        if (!hasExpectedColumns) {{
+            throw new Error(
+                "Network telemetry matrix "
+                + name
+                + " has an invalid shape"
+            );
+        }}
+    }}
+
+    function validateNetworkTelemetry(network) {{
+        if (network === null || typeof network !== "object") {{
+            throw new Error("Network telemetry is unavailable");
+        }}
+
+        const topologyMatches = Array.isArray(network.topology)
+            && network.topology.length === NETWORK_TOPOLOGY.length
+            && network.topology.every((width, index) => {{
+                return width === NETWORK_TOPOLOGY[index];
+            }});
+
+        if (!topologyMatches) {{
+            throw new Error("Network topology must be [2, 16, 16, 1]");
+        }}
+
+        NETWORK_LAYER_KEYS.forEach((layerKey, layerIndex) => {{
+            const expectedWidth = NETWORK_TOPOLOGY[layerIndex];
+            const activations = network.activations?.[layerKey];
+            const summary = network.activation_summary?.[layerKey];
+
+            const validActivations = Array.isArray(activations)
+                && activations.length === data.training_inputs.length
+                && activations.every((row) => {{
+                    return Array.isArray(row)
+                        && row.length === expectedWidth
+                        && row.every(Number.isFinite);
+                }});
+
+            const validSummary = summary !== undefined
+                && ["mean", "min", "max", "spread"].every((key) => {{
+                    const values = summary[key];
+                    return Array.isArray(values)
+                        && values.length === expectedWidth
+                        && values.every(Number.isFinite);
+                }});
+
+            if (!validActivations || !validSummary) {{
+                throw new Error(
+                    "Network telemetry layer "
+                    + layerKey
+                    + " has an invalid shape"
+                );
+            }}
+        }});
+
+        [
+            ["w1", 2, 16],
+            ["b1", 1, 16],
+            ["w2", 16, 16],
+            ["b2", 1, 16],
+            ["w3", 16, 1],
+            ["b3", 1, 1],
+        ].forEach(([name, rows, columns]) => {{
+            validateNetworkMatrix(
+                name,
+                network.parameters?.[name],
+                rows,
+                columns,
+            );
+            validateNetworkMatrix(
+                "gradient " + name,
+                network.gradients?.[name],
+                rows,
+                columns,
+            );
+        }});
+
+        return network;
+    }}
+
+    function buildNetworkLayout() {{
+        const width = networkCanvas.width;
+        const height = networkCanvas.height;
+        const layerX = [
+            width * 0.10,
+            width * 0.37,
+            width * 0.65,
+            width * 0.91,
+        ];
+        const top = 76;
+        const bottom = height - 44;
+
+        return NETWORK_TOPOLOGY.map((nodeCount, layerIndex) => {{
+            const interval = nodeCount === 1
+                ? 0
+                : (bottom - top) / (nodeCount - 1);
+
+            return Array.from(
+                {{ length: nodeCount }},
+                (_, nodeIndex) => {{
+                    return {{
+                        x: layerX[layerIndex],
+                        y: nodeCount === 1
+                            ? (top + bottom) / 2
+                            : top + nodeIndex * interval,
+                        layerIndex,
+                        nodeIndex,
+                    }};
+                }},
+            );
+        }});
+    }}
+
+    function traceConnection(source, target) {{
+        const bend = (target.x - source.x) * 0.38;
+
+        networkContext.beginPath();
+        networkContext.moveTo(source.x, source.y);
+        networkContext.bezierCurveTo(
+            source.x + bend,
+            source.y,
+            target.x - bend,
+            target.y,
+            target.x,
+            target.y,
+        );
+    }}
+
+    function weightPresentation(weight) {{
+        const intensity = 1 - Math.exp(
+            -Math.abs(weight) / WEIGHT_DISPLAY_SCALE
+        );
+
+        return {{
+            intensity,
+            color: weight < 0
+                ? "rgb(195, 93, 82)"
+                : "rgb(24, 127, 156)",
+        }};
+    }}
+
+    function drawStructuralDepthGuides(layout) {{
+        const height = networkCanvas.height;
+
+        networkContext.save();
+        networkContext.setLineDash([3, 7]);
+        networkContext.lineWidth = 1;
+        networkContext.strokeStyle = "rgba(96, 117, 126, 0.24)";
+
+        layout.forEach((layer, layerIndex) => {{
+            const x = layer[0].x;
+
+            networkContext.beginPath();
+            networkContext.moveTo(x + 5, 42);
+            networkContext.lineTo(x + 5, height - 26);
+            networkContext.stroke();
+
+            networkContext.fillStyle = "rgb(82, 97, 106)";
+            networkContext.font = "600 11px ui-sans-serif, system-ui, sans-serif";
+            networkContext.textAlign = "center";
+            networkContext.fillText(
+                NETWORK_LAYER_LABELS[layerIndex],
+                x,
+                26,
+            );
+        }});
+
+        networkContext.restore();
+    }}
+
+    function drawNetworkEdges(network, layout) {{
+        [
+            [network.parameters.w1, 0, 1],
+            [network.parameters.w2, 1, 2],
+            [network.parameters.w3, 2, 3],
+        ].forEach(([matrix, sourceLayer, targetLayer]) => {{
+            matrix.forEach((row, sourceIndex) => {{
+                row.forEach((weight, targetIndex) => {{
+                    const source = layout[sourceLayer][sourceIndex];
+                    const target = layout[targetLayer][targetIndex];
+                    const presentation = weightPresentation(weight);
+
+                    networkContext.save();
+                    traceConnection(source, target);
+                    networkContext.lineWidth = 1;
+                    networkContext.strokeStyle = "rgba(137, 151, 158, 0.20)";
+                    networkContext.stroke();
+
+                    traceConnection(source, target);
+                    networkContext.lineWidth = 0.45 + presentation.intensity * 2.9;
+                    networkContext.strokeStyle = presentation.color;
+                    networkContext.globalAlpha = 0.08 + presentation.intensity * 0.72;
+                    networkContext.stroke();
+                    networkContext.restore();
+                }});
+            }});
+        }});
+    }}
+
+    function aggregateNodePresentation(network, layerIndex, nodeIndex) {{
+        const layerKey = NETWORK_LAYER_KEYS[layerIndex];
+        const summary = network.activation_summary[layerKey];
+
+        return {{
+            activation: summary.mean[nodeIndex],
+            spread: summary.spread[nodeIndex],
+        }};
+    }}
+
+    function drawNetworkNodes(network, layout) {{
+        layout.forEach((layer) => {{
+            layer.forEach((node) => {{
+                const values = aggregateNodePresentation(
+                    network,
+                    node.layerIndex,
+                    node.nodeIndex,
+                );
+                const activation = Math.max(0, Math.min(1, values.activation));
+                const spread = Math.max(0, Math.min(1, values.spread));
+                const radius = node.layerIndex === 3 ? 16 : 11;
+
+                networkContext.save();
+                networkContext.beginPath();
+                networkContext.arc(
+                    node.x + 4,
+                    node.y + 5,
+                    radius,
+                    0,
+                    Math.PI * 2,
+                );
+                networkContext.fillStyle = "rgba(44, 61, 69, 0.18)";
+                networkContext.fill();
+
+                networkContext.beginPath();
+                networkContext.arc(
+                    node.x,
+                    node.y,
+                    radius + 3 + spread * 4,
+                    0,
+                    Math.PI * 2,
+                );
+                networkContext.lineWidth = 1 + spread * 2.5;
+                networkContext.strokeStyle = "rgba(24, 127, 156, 0.20)";
+                networkContext.stroke();
+
+                const gradient = networkContext.createRadialGradient(
+                    node.x - radius * 0.35,
+                    node.y - radius * 0.4,
+                    1,
+                    node.x,
+                    node.y,
+                    radius,
+                );
+                gradient.addColorStop(
+                    0,
+                    "rgba(255, 255, 255, 0.96)",
+                );
+                gradient.addColorStop(
+                    0.35,
+                    "rgba(101, 190, 211, " + (0.22 + activation * 0.45) + ")",
+                );
+                gradient.addColorStop(
+                    1,
+                    "rgba(24, 83, 102, " + (0.20 + activation * 0.65) + ")",
+                );
+
+                networkContext.beginPath();
+                networkContext.arc(
+                    node.x,
+                    node.y,
+                    radius,
+                    0,
+                    Math.PI * 2,
+                );
+                networkContext.fillStyle = gradient;
+                networkContext.fill();
+                networkContext.lineWidth = 1.2;
+                networkContext.strokeStyle = "rgba(255, 255, 255, 0.85)";
+                networkContext.stroke();
+                networkContext.restore();
+            }});
+        }});
+    }}
+
+    function drawNetwork(network) {{
+        const layout = buildNetworkLayout();
+
+        networkContext.clearRect(
+            0,
+            0,
+            networkCanvas.width,
+            networkCanvas.height,
+        );
+        drawStructuralDepthGuides(layout);
+        drawNetworkEdges(network, layout);
+        drawNetworkNodes(network, layout);
+    }}
+
+    function renderNetwork(state) {{
+        if (state.network_error !== null) {{
+            networkError.textContent = state.network_error;
+            networkError.hidden = false;
+            return;
+        }}
+
+        try {{
+            const network = validateNetworkTelemetry(state.network);
+
+            drawNetwork(network);
+            networkError.hidden = true;
+            networkInspection.textContent = "Aggregate batch activity · hover inspection pending";
+        }}
+        catch (error) {{
+            networkContext.clearRect(
+                0,
+                0,
+                networkCanvas.width,
+                networkCanvas.height,
+            );
+            networkError.textContent = error instanceof Error
+                ? error.message
+                : "Unable to render network telemetry";
+            networkError.hidden = false;
+        }}
     }}
 
     function probabilityColor(value) {{
@@ -1061,6 +1416,7 @@ input:focus-visible {{
         drawDecisionBoundary(state.decision_boundary);
         drawTrainingPoints();
         drawLossHistory(state.loss_history);
+        renderNetwork(state);
 
         epochValue.textContent = String(state.epoch);
         lossValue.textContent = Number(state.loss).toFixed(6);

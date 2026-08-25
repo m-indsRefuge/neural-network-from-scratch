@@ -155,6 +155,37 @@ def test_live_viewer_defines_scientific_light_tokens_and_responsive_layout() -> 
     assert "@media (max-width: 700px)" in html
 
 
+def test_network_renderer_consumes_all_real_network_layers() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "function validateNetworkTelemetry" in html
+    assert "function buildNetworkLayout" in html
+    assert "function drawNetwork" in html
+    assert "function drawNetworkEdges" in html
+    assert "function drawNetworkNodes" in html
+
+    assert "validateNetworkTelemetry(state.network)" in html
+    assert "network.topology" in html
+    assert "network.activation_summary" in html
+    assert "network.parameters.w1" in html
+    assert "network.parameters.w2" in html
+    assert "network.parameters.w3" in html
+    assert "WEIGHT_DISPLAY_SCALE" in html
+
+
+def test_network_renderer_rejects_non_nn01_topology_without_substitution() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "Network topology must be [2, 16, 16, 1]" in html
+    assert "Network telemetry matrix" in html
+
+
 def test_browser_consumes_server_learning_dynamics() -> None:
     html = render_live_observatory_html(
         linear_split_experiment(),
