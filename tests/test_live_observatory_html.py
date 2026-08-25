@@ -294,3 +294,13 @@ def test_light_dynamics_controls_and_error_rendering_use_live_state() -> None:
 
     for value in ("1000", "200", "100", "0"):
         assert f'value="{value}"' in html
+
+
+def test_controls_keep_the_speed_selector_compact_on_desktop() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert ".controls #speed-select" in html
+    assert "flex: 0 1 180px" in html

@@ -474,6 +474,11 @@ h1 {{
     box-shadow: var(--shadow-panel);
 }}
 
+.controls #speed-select {{
+    flex: 0 1 180px;
+    width: min(180px, 100%);
+}}
+
 button,
 select {{
     border-color: var(--border-subtle);
