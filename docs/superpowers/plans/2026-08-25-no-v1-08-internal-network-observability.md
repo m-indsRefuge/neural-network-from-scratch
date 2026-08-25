@@ -847,10 +847,11 @@ and browser-native JavaScript. No additional runtime or development dependency.
 
 ### Placeholder scan
 
-The plan has no unresolved placeholders. Every task names its exact files, input/output
-interfaces, RED command, GREEN command, and focused commit boundary. Task 8
-only permits production edits when real integration evidence identifies a
-defect, preserving the scope boundary.
+The plan has no unresolved placeholders. Every implementation task names its
+exact files, input/output interfaces, RED command, GREEN command, and focused
+commit boundary. Task 8 intentionally makes no production edit; a discovered
+integration defect returns to the earliest responsible implementation task for
+its own focused RED/GREEN repair, preserving the scope boundary.
 
 ### Type consistency
 
