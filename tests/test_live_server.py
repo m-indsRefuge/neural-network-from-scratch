@@ -260,3 +260,71 @@ def test_http_stepping_remains_equivalent_to_normal_training() -> None:
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
+
+
+def test_get_state_returns_full_history_without_mutation() -> None:
+    with _running_server(
+        epochs=3,
+        resolution=5,
+    ) as (server, base_url):
+        _post_json(f"{base_url}/api/step")
+        _post_json(f"{base_url}/api/step")
+
+        before_epoch = server.session.epoch
+        before_history = server.session.loss_history
+
+        state = _read_json(f"{base_url}/api/state")
+
+        assert state["epoch"] == 2
+        assert state["loss_history"] == list(before_history)
+        assert state["loss"] == before_history[-1]
+        assert server.session.epoch == before_epoch
+        assert server.session.loss_history == before_history
+
+
+def test_post_step_grows_live_history_exactly_once() -> None:
+    with _running_server(
+        epochs=3,
+        resolution=5,
+    ) as (_, base_url):
+        initial = _read_json(f"{base_url}/api/state")
+        stepped = _post_json(f"{base_url}/api/step")
+
+        assert len(initial["loss_history"]) == 1
+        assert len(stepped["loss_history"]) == 2
+        assert stepped["epoch"] == 1
+        assert stepped["loss"] == stepped["loss_history"][-1]
+
+
+def test_http_state_contains_server_boundary_geometry() -> None:
+    with _running_server(
+        resolution=5,
+    ) as (_, base_url):
+        state = _read_json(f"{base_url}/api/state")
+
+        assert "decision_boundary" in state
+        assert isinstance(state["decision_boundary"], list)
+
+
+def test_completion_409_does_not_extend_live_history() -> None:
+    with _running_server(
+        epochs=1,
+        resolution=5,
+    ) as (server, base_url):
+        completed = _post_json(f"{base_url}/api/step")
+        completed_history = tuple(completed["loss_history"])
+
+        request = Request(
+            f"{base_url}/api/step",
+            method="POST",
+        )
+
+        try:
+            urlopen(request)
+        except HTTPError as error:
+            assert error.code == 409
+        else:
+            raise AssertionError("Expected HTTP 409")
+
+        assert server.session.epoch == 1
+        assert server.session.loss_history == completed_history
