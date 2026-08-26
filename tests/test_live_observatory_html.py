@@ -44,6 +44,7 @@ def test_live_viewer_embeds_only_immutable_experiment_data() -> None:
     assert data["resolution"] == 5
     assert data["training_inputs"] == experiment.inputs.tolist()
     assert data["training_targets"] == experiment.targets.ravel().tolist()
+    assert data["learning_rate"] == experiment.learning_rate
 
     assert "frames" not in data
     assert "probabilities" not in data
@@ -109,6 +110,146 @@ def test_live_viewer_has_learning_dynamics_surfaces() -> None:
     assert "function drawLossHistory" in html
 
 
+def test_live_viewer_has_scientific_network_instruments() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert 'id="network-canvas"' in html
+    assert 'id="belief-canvas"' in html
+    assert 'id="loss-canvas"' in html
+
+    assert 'id="aggregate-button"' in html
+    assert 'aria-pressed="true"' in html
+    assert 'id="weight-overlay-toggle"' in html
+    assert 'id="gradient-overlay-toggle"' in html
+    assert 'id="network-inspection"' in html
+    assert 'id="network-error"' in html
+
+
+def test_live_viewer_defines_scientific_light_tokens_and_responsive_layout() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    for token in (
+        "--surface-page",
+        "--surface-panel",
+        "--surface-inset",
+        "--text-primary",
+        "--text-secondary",
+        "--text-muted",
+        "--accent-positive",
+        "--accent-negative",
+        "--accent-neutral",
+        "--accent-selection",
+        "--border-subtle",
+        "--shadow-panel",
+        "--shadow-neuron",
+    ):
+        assert token in html
+
+    assert "@media (max-width: 900px)" in html
+    assert "@media (max-width: 700px)" in html
+
+
+def test_network_renderer_consumes_all_real_network_layers() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "function validateNetworkTelemetry" in html
+    assert "function buildNetworkLayout" in html
+    assert "function drawNetwork" in html
+    assert "function drawNetworkEdges" in html
+    assert "function drawNetworkNodes" in html
+
+    assert "validateNetworkTelemetry(state.network)" in html
+    assert "network.topology" in html
+    assert "network.activation_summary" in html
+    assert "network.parameters.w1" in html
+    assert "network.parameters.w2" in html
+    assert "network.parameters.w3" in html
+    assert "WEIGHT_DISPLAY_SCALE" in html
+
+
+def test_network_renderer_rejects_non_nn01_topology_without_substitution() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "Network topology must be [2, 16, 16, 1]" in html
+    assert "Network telemetry matrix" in html
+
+
+def test_network_renderer_has_distinct_real_gradient_and_inspection_channels() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "function drawGradientOverlay" in html
+    assert "function renderNetworkInspection" in html
+    assert "function queueServerState" in html
+    assert "requestAnimationFrame" in html
+    assert "data.learning_rate" in html
+
+    for matrix_name in (
+        "network.gradients.w1",
+        "network.gradients.w2",
+        "network.gradients.w3",
+        "network.parameters.b1",
+        "network.parameters.b2",
+        "network.parameters.b3",
+    ):
+        assert matrix_name in html
+
+
+def test_browser_never_implements_nn_math_or_contour_extraction() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    for forbidden_implementation in (
+        "function forward",
+        "function backward",
+        "function sigmoid",
+        "function computeGradients",
+        "marchingSquares",
+        "computeDecisionBoundary",
+    ):
+        assert forbidden_implementation not in html
+
+
+def test_sample_selection_is_local_and_uses_python_batch_rows() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert "let selectedSampleIndex = null" in html
+    assert "function pickTrainingSample" in html
+    assert "function setAggregateMode" in html
+    assert "function setSampleMode" in html
+    assert 'id="view-mode-value"' in html
+
+    for activation_path in (
+        "state.network.activations.input[selectedSampleIndex]",
+        "state.network.activations.hidden_1[selectedSampleIndex]",
+        "state.network.activations.hidden_2[selectedSampleIndex]",
+        "state.network.activations.output[selectedSampleIndex]",
+    ):
+        assert activation_path in html
+
+    assert "selectedSampleIndex === index" in html
+    assert "function pickTrainingSample" in html
+
+
 def test_browser_consumes_server_learning_dynamics() -> None:
     html = render_live_observatory_html(
         linear_split_experiment(),
@@ -131,3 +272,35 @@ def test_loss_history_draws_visible_current_point() -> None:
     assert "function drawLossHistory" in html
     assert "lossContext.arc(" in html
     assert "lossContext.fill()" in html
+
+
+def test_light_dynamics_controls_and_error_rendering_use_live_state() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert html.count("<style>") == 1
+    assert "color-scheme: dark" not in html
+    assert "function drawLossHistory" in html
+    assert "state.loss_history" in html
+    assert "lossContext.arc(" in html
+    assert "state.network_error" in html
+    assert "function renderNetworkError" in html
+    assert 'id="weight-overlay-toggle"' in html
+    assert 'id="gradient-overlay-toggle"' in html
+    assert 'weightOverlayToggle.addEventListener("change"' in html
+    assert 'gradientOverlayToggle.addEventListener("change"' in html
+
+    for value in ("1000", "200", "100", "0"):
+        assert f'value="{value}"' in html
+
+
+def test_controls_keep_the_speed_selector_compact_on_desktop() -> None:
+    html = render_live_observatory_html(
+        linear_split_experiment(),
+        resolution=5,
+    )
+
+    assert ".controls #speed-select" in html
+    assert "flex: 0 1 180px" in html
